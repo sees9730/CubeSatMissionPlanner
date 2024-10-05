@@ -1,7 +1,8 @@
 # Custom imports
 # import Utilities.Objects
 # import PlanningObjects.UsefulFunctions
-from PlanningObjects.MissionConfig import MissionConfig
+# from PlanningObjects.MissionConfig import MissionConfig
+from PlanningObjects.CubeSatMission import CubeSatMission
 # import PlanningObjects.Satellite
 
 # def main():
@@ -10,8 +11,11 @@ from PlanningObjects.MissionConfig import MissionConfig
 excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
 
 # Create the MissionConfig object
-mission_config = MissionConfig(excel_file_path)
-satellite = mission_config.createSatelliteObject()
+cubesat_mission = CubeSatMission(excel_file_path)
+print(cubesat_mission.satellite.altitudes)
+# mission_config = MissionConfig(excel_file_path)
+# satellite = mission_config.createSatelliteObject()
+
 
 
 # Get the satellite info

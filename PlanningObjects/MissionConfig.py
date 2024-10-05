@@ -1,6 +1,5 @@
 # Import libraries
 import pandas as pd
-from PlanningObjects.Satellite import Satellite
 
 class MissionConfig:
     """
@@ -52,37 +51,3 @@ class MissionConfig:
             return self.excel_input.parse(sheet_name)
         except ValueError:
             raise ValueError(f"Sheet '{sheet_name}' not found in the provided Excel file.")
-
-    def createSatelliteObject(self) -> Satellite:
-        """
-        Create a new Satellite object based on the data in the plan_info DataFrame.
-        
-        Returns
-        -------
-        Satellite
-            A new Satellite object with the data from the plan_info DataFrame.
-        """
-        return Satellite(self.plan_info['TLE URL'].values[0],
-                         self.plan_info['TLE File'].values[0],
-                         self.plan_info['Satellite Name'].values[0],
-                         self.plan_info['Simulation Start Time [YYYY-MM-DD HH:MM:SS UTC]'].values[0],
-                         self.plan_info['Simulation End Time [YYYY-MM-DD HH:MM:SS UTC]'].values[0],
-                         self.plan_info['Timestep [sec]'].values[0])
-
-    def __repr__(self) -> str:
-        """
-        Provide a string representation of the MissionConfig.
-        
-        Returns
-        -------
-        str
-            A string representation of the MissionConfig object.
-        """
-        return (f"MissionConfig(plan_info=DataFrame({len(self.plan_info)} rows), "
-                f"ground_stations_info=DataFrame({len(self.ground_stations_info)} rows), "
-                f"constraints_info=DataFrame({len(self.constraints_info)} rows), "
-                f"saa_info=DataFrame({len(self.saa_info)} rows), "
-                f"targets_info=DataFrame({len(self.targets_info)} rows), "
-                f"survey_info=DataFrame({len(self.survey_info)} rows), "
-                f"power_info=DataFrame({len(self.power_info)} rows), "
-                f"data_info=DataFrame({len(self.data_info)} rows))")
