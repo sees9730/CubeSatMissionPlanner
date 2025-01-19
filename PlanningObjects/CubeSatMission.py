@@ -1,4 +1,6 @@
 from typing import List, Type, Dict
+from Utilities.Helpers import Helpers
+from Utilities.MissionStatus import MissionStatus
 from PlanningObjects.Satellite import Satellite
 from PlanningObjects.MissionConfig import MissionConfig
 from PlanningObjects.ScienceMission import ScienceMission
@@ -45,128 +47,6 @@ class CubeSatMission:
     operations : Schedule
         A schedule of the operations for the mission.
     """
-
-    class MissionStatus(Enum):
-        TARGET2 = -2
-        TARGET1 = -1
-        DOWNTIME = 0
-        CHARGING = 1
-        OBSERVING = 2
-        POINTING = 3
-        DOWNLINK = 4
-        SAA = 5
-        POLAR = 6
-
-        def get_key(value: int) -> None:
-            """
-            Get the key (name) of an enum value
-            """
-            for member in CubeSatMission.MissionStatus:
-                if member.value == value:
-                    return member.name
-            raise ValueError(f"Value '{value}' not found in Enum.")
-        
-        def get_value(key: str) -> None:
-            """
-            Get the value of an enum key (name)
-            """
-            for member in CubeSatMission.MissionStatus:
-                if member.name.casefold() == key.casefold():
-                    return member.value
-            return None
-
-        # DONE
-        def plot_color(value = -10) -> str:
-            """
-            Get the color of an enum value
-
-            Args:
-                value (int): The value of the enum
-
-            Returns:
-                str: The color used to plot
-            """
-            color_mapping = {
-                CubeSatMission.MissionStatus.TARGET2.value: 'darkgoldenrod',
-                CubeSatMission.MissionStatus.TARGET1.value: 'firebrick',
-                CubeSatMission.MissionStatus.DOWNTIME.value: 'red',
-                CubeSatMission.MissionStatus.CHARGING.value: 'mediumseagreen',
-                CubeSatMission.MissionStatus.POINTING.value: 'steelblue',
-                CubeSatMission.MissionStatus.DOWNLINK.value: 'tab:orange',
-                CubeSatMission.MissionStatus.SAA.value: 'khaki',
-                CubeSatMission.MissionStatus.POLAR.value: 'khaki'
-            }
-            return color_mapping.get(value, 'black')
-
-        
-    class Helpers:
-
-        def inclusive_slice(array: np.ndarray, start: int, end: int) -> np.ndarray:
-            """Return a slice of the array from start to end, inclusive."""
-            return array[start:end + 1]
-        
-        def get_pointing_cost() -> int:
-            return 80
-        
-        def isInsideEclipse(satellite, eclipses, time):
-            
-            # Get the times
-            times = satellite.times
-
-            # Get the indices of the eclipses
-            eclipse_indices = np.array([eclipse.schedule_indices for eclipse in eclipses])
-            
-            # Find the index of the given time in the time schedule
-            time_index = np.where(times == time)[0]
-
-            # If the time is not found in the time schedule, it's definitely not in an eclipse
-            if not time_index.size:
-                return False, None
-
-            time_index = time_index[0]  # Extract the index from the array
-
-            # Determine if the time index is inside any of the eclipse index ranges
-            inside_eclipse = np.logical_and(
-                eclipse_indices[:, 0] <= time_index,
-                time_index <= eclipse_indices[:, 1]
-            )
-
-            # Return if the time is inside an eclipse
-            if any(inside_eclipse):
-                eclipse_num = [eclipse.eclipse_number for eclipse, inside in zip(eclipses, inside_eclipse) if inside]
-                return True, eclipse_num[0]
-
-            return False, None
-        
-        def get_energy_dict(mission_config: 'MissionConfig') -> Dict[str, int]:
-
-            # Change the column names to more readable/code friendly names
-            ColumnMappingPowerBudget = {
-                'Initial Charge [J]': 'INITIAL_CHARGE',
-                'Maximum Charge [J]': 'MAXIMUM_CHARGE',
-                'Charging [W]': 'CHARGING',
-                'Pointing [W]': 'POINTING',
-                'Observation [W]': 'TARGET1',
-                'Downlink [W]': 'DOWNLINK',
-                'Idle [W]': 'DOWNTIME'
-            }
-
-            # Get the energy data frame and rename the columns
-            df = mission_config.power_info
-            df.rename(columns = ColumnMappingPowerBudget, inplace = True)
-
-            # Add the extra columns for equal power values
-            df['TARGET2'] = df['TARGET1']
-            df['SAA'] = df['DOWNTIME']
-            df['POLAR'] = df['DOWNTIME']
-
-            # Convert the DataFrame to a dictionary and extract the first value from each list (assuming single-value columns)
-            data_dict = df.to_dict(orient='list')
-            result_dict = {k: v[0] for k, v in data_dict.items()}
-
-            return result_dict
-            
-    
 
     def __init__(self, excel_file_path: str,
                  debug_vars: Dict[str, bool]):
@@ -382,21 +262,21 @@ class CubeSatMission:
             targets_available = {}
 
             # Get the indices in this chunk and the start and end. Have to add 1 to the end index to include it
-            eclipse_schedule = self.Helpers.inclusive_slice(overall_eclipse_schedule, start, end)
+            eclipse_schedule = Helpers.inclusive_slice(overall_eclipse_schedule, start, end)
             eclipse_schedule = ~eclipse_schedule # Flip the schedule to have it be all zeros (standard status)
 
             # Get the times of the eclipse
             start_time = self.satellite.times[start]
             end_time = self.satellite.times[end]
-            eclipse_times = self.Helpers.inclusive_slice(self.satellite.times, start, end)
+            eclipse_times = Helpers.inclusive_slice(self.satellite.times, start, end)
 
             operations = Schedule("Operations", start_time, end_time,
                                   self.satellite.time_step_sec, eclipse_times, eclipse_schedule,
-                                  self.MissionStatus)
+                                  MissionStatus)
             
             for survey in surveys:
                 for target in survey.targets:
-                    target_eclipse_schedule = self.Helpers.inclusive_slice(target.schedule.status, start, end)
+                    target_eclipse_schedule = Helpers.inclusive_slice(target.schedule.status, start, end)
 
                     # Check if the target is available during the eclipse and if it is for long enough
                     if np.any(target_eclipse_schedule) and np.sum(target_eclipse_schedule) * target.schedule.time_step_sec > survey.target_min_exp_time:
@@ -439,7 +319,7 @@ class CubeSatMission:
         operations_schedule_bp = np.copy(operations_schedule)
         self.operations = []
         self.operations.append(Schedule("Before Pointing Operations Schedule", self.satellite.start_time, self.satellite.end_time,
-                                        self.satellite.time_step_sec, self.satellite.times, operations_schedule_bp, self.MissionStatus))
+                                        self.satellite.time_step_sec, self.satellite.times, operations_schedule_bp, MissionStatus))
 
         # Allocate pointing operations and choose targets to observe
         self._allocate_pointing_operations(operations_schedule, self.pointing_debug)
@@ -456,7 +336,7 @@ class CubeSatMission:
         # Save the operations schedule after pointing operations
         operations_schedule_ap = np.copy(operations_schedule)
         self.operations.append(Schedule("Final Operations Schedule", self.satellite.start_time, self.satellite.end_time,
-                                self.satellite.time_step_sec, self.satellite.times, operations_schedule_ap, self.MissionStatus))
+                                self.satellite.time_step_sec, self.satellite.times, operations_schedule_ap, MissionStatus))
 
     def _create_commands_list(self):
 
@@ -469,7 +349,7 @@ class CubeSatMission:
         change_indices = np.concatenate(([0], change_indices))  # Include the starting index
 
         # Get the net eneregy dictionary
-        net_energy_dict = self.Helpers.get_energy_dict(self.mission_config)
+        net_energy_dict = Helpers.get_energy_dict(self.mission_config)
 
         # Get the times
         times = self.satellite.times.utc_datetime()
@@ -486,14 +366,14 @@ class CubeSatMission:
             action_duration_min = datetime.timedelta(minutes = action_duration_sec.total_seconds() / 60)
 
             # Get the key of the action, the power value, the excel text, and json text
-            action_key = self.MissionStatus.get_key(operations_schedule[index])
+            action_key = MissionStatus.get_key(operations_schedule[index])
             energy_value = net_energy_dict[action_key] * action_duration_sec.total_seconds()
             action_text = f'{action_key} for {action_duration_min} min'
             action_json = 'TEST'
             # print(f"Time: {action_time}, Duration: {action_duration_min}, Action: {action_key}, Power: {power_value}")
 
             # Determine if the action is inside an eclipse
-            action_inside_eclipse, action_eclipse_num = self.Helpers.isInsideEclipse(self.satellite, self.science_mission.eclipses, action_time)
+            action_inside_eclipse, action_eclipse_num = Helpers.is_inside_eclipse(self.satellite, self.science_mission.eclipses, action_time)
 
             # Add the action to the list
             action = ActionChunk(
@@ -526,7 +406,7 @@ class CubeSatMission:
         """
 
         # Get the power budget information
-        net_energy_dict =  self.Helpers.get_energy_dict(self.mission_config)
+        net_energy_dict =  Helpers.get_energy_dict(self.mission_config)
         initial_charge = net_energy_dict['INITIAL_CHARGE']
         max_charge = net_energy_dict['MAXIMUM_CHARGE']
 
@@ -627,9 +507,9 @@ class CubeSatMission:
         polar_schedule = self.get_schedule_by_name("Polar Keepout Schedule").status
         charging_schedule = self.get_schedule_by_name("Charging Schedule").status
 
-        operations_schedule[saa_schedule] = self.MissionStatus.SAA.value
-        operations_schedule[polar_schedule] = self.MissionStatus.POLAR.value
-        operations_schedule[charging_schedule] = self.MissionStatus.CHARGING.value
+        operations_schedule[saa_schedule] = MissionStatus.SAA.value
+        operations_schedule[polar_schedule] = MissionStatus.POLAR.value
+        operations_schedule[charging_schedule] = MissionStatus.CHARGING.value
 
     def _allocate_targets_and_update_eclipses(self, operations_schedule):
         """Allocate the availability of the targets and update the eclipses."""
@@ -638,7 +518,7 @@ class CubeSatMission:
             # Get the eclipse schedule
             eclipse_start = eclipse.schedule_indices[0]
             eclipse_end = eclipse.schedule_indices[1]
-            eclipse_schedule = self.Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end)
+            eclipse_schedule = Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end)
 
             # Update the eclipse schedule
             # for target_schedule in eclipse.targets_available.values():
@@ -646,9 +526,9 @@ class CubeSatMission:
                 if np.any(target_schedule):
 
                     # Mark the eclipse as observing a target
-                    eclipse_schedule[target_schedule] = self.MissionStatus.OBSERVING.value
+                    eclipse_schedule[target_schedule] = MissionStatus.OBSERVING.value
 
-                    if np.all(eclipse_schedule != self.MissionStatus.DOWNTIME.value):
+                    if np.all(eclipse_schedule != MissionStatus.DOWNTIME.value):
                         break  # Stop if there is no downtime in the eclipse
 
             # Save the eclipse schedule
@@ -658,17 +538,17 @@ class CubeSatMission:
         """Allocate the downlink windows in the operations schedule."""
         # Get the downlink schedule
         downlink_schedule = self.get_schedule_by_name("Ground Stations Schedule").status
-        operations_schedule[downlink_schedule] = self.MissionStatus.DOWNLINK.value
+        operations_schedule[downlink_schedule] = MissionStatus.DOWNLINK.value
 
         # Allocate the pointing windows for downlink
-        dilated_downlink = self.getMovesOutside(operations_schedule == self.MissionStatus.DOWNLINK.value, pointing_cost=self.Helpers.get_pointing_cost())
-        operations_schedule[dilated_downlink == 1] = self.MissionStatus.POINTING.value
+        dilated_downlink = self.getMovesOutside(operations_schedule == MissionStatus.DOWNLINK.value, pointing_cost=Helpers.get_pointing_cost())
+        operations_schedule[dilated_downlink == 1] = MissionStatus.POINTING.value
 
         # Update the eclipses
         for eclipse in self.science_mission.eclipses:
             eclipse_start = eclipse.schedule_indices[0]
             eclipse_end = eclipse.schedule_indices[1]
-            eclipse_schedule = np.copy(self.Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end))
+            eclipse_schedule = np.copy(Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end))
             eclipse.operations.status = eclipse_schedule
 
     def _allocate_pointing_operations(self, operations_schedule, pointing_debug):
@@ -685,8 +565,8 @@ class CubeSatMission:
             self.update_targets_priorities(eclipse, pointing_debug)
 
             # Allocate the pointing operations if there is at least one target available
-            if np.any(eclipse_schedule == self.MissionStatus.OBSERVING.value):
-                target_num = self.MissionStatus.TARGET1.value
+            if np.any(eclipse_schedule == MissionStatus.OBSERVING.value):
+                target_num = MissionStatus.TARGET1.value
                 for target_name, target_schedule in eclipse.targets_available.items():
                     if np.any(target_schedule):
                         self._allocate_target_pointing_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_schedule, target_num, eclipse_start, eclipse_end, min_exp_time, pointing_debug)
@@ -702,19 +582,19 @@ class CubeSatMission:
 
         # Get the other target's number status
         other_target_num = {
-            self.MissionStatus.TARGET1.value: self.MissionStatus.OBSERVING.value,
-            self.MissionStatus.TARGET2.value: self.MissionStatus.TARGET1.value
+            MissionStatus.TARGET1.value: MissionStatus.OBSERVING.value,
+            MissionStatus.TARGET2.value: MissionStatus.TARGET1.value
         }.get(target_num, None)
 
         # Check if there is enough time to observe the target
-        free_target_slots = target_schedule & (eclipse_schedule == self.MissionStatus.OBSERVING.value)
-        remaining_time = (np.sum(free_target_slots) - self.Helpers.get_pointing_cost()) * self.satellite.time_step_sec if other_target_num == self.MissionStatus.OBSERVING.value else np.sum(free_target_slots) * self.satellite.time_step_sec
+        free_target_slots = target_schedule & (eclipse_schedule == MissionStatus.OBSERVING.value)
+        remaining_time = (np.sum(free_target_slots) - Helpers.get_pointing_cost()) * self.satellite.time_step_sec if other_target_num == MissionStatus.OBSERVING.value else np.sum(free_target_slots) * self.satellite.time_step_sec
         target_min_exp_time = self.science_mission.get_survey_of_target(target_name).target_min_exp_time
         enough_time = remaining_time >= target_min_exp_time
 
         # Target 1 has priority if it has 80% of the observing time
         if np.sum(free_target_slots) != 0:
-            if (target_num == self.MissionStatus.TARGET1.value) and ((np.sum(free_target_slots) / np.sum(eclipse_schedule == self.MissionStatus.OBSERVING.value)) >= 0.8) and enough_time:
+            if (target_num == MissionStatus.TARGET1.value) and ((np.sum(free_target_slots) / np.sum(eclipse_schedule == MissionStatus.OBSERVING.value)) >= 0.8) and enough_time:
                 eclipse_schedule[free_target_slots == 1] = target_num
                 self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug)
                 target_num = -3 # Break out of the outer loop
@@ -732,12 +612,12 @@ class CubeSatMission:
                     if index_end_pointing < len(eclipse_schedule) and eclipse_schedule[index_end_pointing] != target_num:
                         indices = self.getChangeIndices(eclipse_schedule, target_num, 'after', 'both')
                         visibility_start_index, visibility_end_index = indices[0], indices[1]
-                        eclipse_schedule[visibility_start_index: visibility_end_index] = self.MissionStatus.DOWNTIME.value
+                        eclipse_schedule[visibility_start_index: visibility_end_index] = MissionStatus.DOWNTIME.value
                         exception = True
 
                     if not exception:
                         pointing_moves[index_start_pointing: index_end_pointing] = 1
-                        eclipse_schedule[pointing_moves == 1] = self.MissionStatus.POINTING.value
+                        eclipse_schedule[pointing_moves == 1] = MissionStatus.POINTING.value
 
                 # Update the eclipse and operations
                 self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug)
@@ -749,10 +629,10 @@ class CubeSatMission:
         """Get the start and end indices for pointing."""
         if first_target_num == target_num:
             index_end_pointing = self.getChangeIndices(eclipse_schedule, other_target_num, 'after', 'start')[0]
-            index_start_pointing = index_end_pointing - self.Helpers.get_pointing_cost()
+            index_start_pointing = index_end_pointing - Helpers.get_pointing_cost()
         else:
             index_start_pointing = self.getChangeIndices(eclipse_schedule, target_num, 'after', 'start')[0]
-            index_end_pointing = index_start_pointing + self.Helpers.get_pointing_cost()
+            index_end_pointing = index_start_pointing + Helpers.get_pointing_cost()
         return index_start_pointing, index_end_pointing
 
     def _update_eclipse_and_operations(self, eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug):
@@ -760,7 +640,7 @@ class CubeSatMission:
 
         # Update the eclipse's properties for the eclipse object
         eclipse.operations.status = eclipse_schedule
-        index = 0 if target_num == self.MissionStatus.TARGET1.value else 1
+        index = 0 if target_num == MissionStatus.TARGET1.value else 1
         if len(eclipse.targets_names) > 0:
             eclipse.targets_names[index] = target_name
             eclipse.targets_exp_times[index] = np.sum(eclipse_schedule == target_num) * self.satellite.time_step_sec
@@ -788,29 +668,29 @@ class CubeSatMission:
         """
 
         # Get the indices before you start charging (get the last status before you start charging)
-        indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.CHARGING.value, index='before', change_type='start')
+        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='start')
 
         # See detailed visualization inside each function
         for _, index in enumerate(indices):
-            if operations_schedule[index + self.Helpers.get_pointing_cost()] == self.MissionStatus.POINTING.value:
+            if operations_schedule[index + Helpers.get_pointing_cost()] == MissionStatus.POINTING.value:
                 pass
-            elif operations_schedule[index] == self.MissionStatus.DOWNTIME.value:
+            elif operations_schedule[index] == MissionStatus.DOWNTIME.value:
                 self._allocate_pointing_before_charging_during_downtime(operations_schedule, index)
-            elif operations_schedule[index - self.Helpers.get_pointing_cost()] == self.MissionStatus.POINTING.value:
+            elif operations_schedule[index - Helpers.get_pointing_cost()] == MissionStatus.POINTING.value:
                 self._allocate_charging_after_pointing_before_charging_during_unknown(operations_schedule, index)
-            elif operations_schedule[index] == self.MissionStatus.POLAR.value:
+            elif operations_schedule[index] == MissionStatus.POLAR.value:
                 self._allocate_pointing_before_charging_during_polar(operations_schedule, index)
-            elif operations_schedule[index] != self.MissionStatus.POINTING.value:
+            elif operations_schedule[index] != MissionStatus.POINTING.value:
                 self._allocate_pointing_if_possible(operations_schedule, index)
 
         # Get the indices after you end charging
-        indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.CHARGING.value, index='after', change_type='end')
+        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='end')
 
         # See detailed visualization inside each function
         for index in indices:
-            if operations_schedule[index] == self.MissionStatus.SAA.value:
+            if operations_schedule[index] == MissionStatus.SAA.value:
                 self._allocate_pointing_after_saa(operations_schedule, index)
-            elif operations_schedule[index] not in (self.MissionStatus.POINTING.value, self.MissionStatus.DOWNTIME.value):
+            elif operations_schedule[index] not in (MissionStatus.POINTING.value, MissionStatus.DOWNTIME.value):
                 self._allocate_pointing_before_end(operations_schedule, index)
 
         # # Update the eclipses
@@ -830,11 +710,11 @@ class CubeSatMission:
         # After: [T T T T P  P  C C]
 
         # Get the index of the start of the closest downtime and mark it that as the beginning of the pointing 
-        start_downtime_indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.DOWNTIME.value, index='after', change_type='start')
+        start_downtime_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.DOWNTIME.value, index='after', change_type='start')
         closest_start_downtime_index = self.getClosestValue(value=index, array=start_downtime_indices)
         start_pointing_index = closest_start_downtime_index
-        end_pointing_index = start_pointing_index + self.Helpers.get_pointing_cost() + 1
-        operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.POINTING.value
+        end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
+        operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
 
     def _allocate_charging_after_pointing_before_charging_during_unknown(self, operations_schedule, index):
         """Allocate charging after pointing before charging during unknown.
@@ -850,12 +730,12 @@ class CubeSatMission:
 
         # Get the status of what comes before the charging window (but after the pointing window detected) and mark it as charging
         status_after_pointing = operations_schedule[index]
-        if status_after_pointing not in (self.MissionStatus.TARGET1, self.MissionStatus.TARGET2):
+        if status_after_pointing not in (MissionStatus.TARGET1, MissionStatus.TARGET2):
             start_status_indices = self.getChangeIndices(schedule=operations_schedule, value=status_after_pointing, index='after', change_type='start')
-            closest_start_status_index = self.getClosestValue(value=index - self.Helpers.get_pointing_cost(), array=start_status_indices)
+            closest_start_status_index = self.getClosestValue(value=index - Helpers.get_pointing_cost(), array=start_status_indices)
             start_pointing_index = closest_start_status_index
-            end_pointing_index = start_pointing_index + self.Helpers.get_pointing_cost() + 1
-            operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.CHARGING.value
+            end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
+            operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.CHARGING.value
 
     # Done
     def _allocate_pointing_before_charging_during_polar(self, operations_schedule, index):
@@ -871,11 +751,11 @@ class CubeSatMission:
         # After: [T T T T P  P  C C]
         
         # Get the start of the closest polar and mark its beginning as the beginning of the pointing
-        start_polar_indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.POLAR.value, index='after', change_type='start')
+        start_polar_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='start')
         closest_start_polar_index = self.getClosestValue(value=index, array=start_polar_indices)
         start_pointing_index = closest_start_polar_index
-        end_pointing_index = start_pointing_index + self.Helpers.get_pointing_cost() + 1
-        operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.POINTING.value
+        end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
+        operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
 
     # Done
     def _allocate_pointing_if_possible(self, operations_schedule, index):
@@ -892,9 +772,9 @@ class CubeSatMission:
 
         # Start pointing during the beginning of the charging window
         start_pointing_index = index + 1
-        end_pointing_index = start_pointing_index + self.Helpers.get_pointing_cost() + 1
-        if np.all(operations_schedule[start_pointing_index: end_pointing_index] == self.MissionStatus.CHARGING.value):
-            operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.POINTING.value
+        end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
+        if np.all(operations_schedule[start_pointing_index: end_pointing_index] == MissionStatus.CHARGING.value):
+            operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
 
     # Done
     def _allocate_pointing_after_saa(self, operations_schedule, index):
@@ -910,12 +790,12 @@ class CubeSatMission:
         # After: [C C S P P nP nP]
 
         # Start pointing before the end of the SAA to take advantage of the SAA
-        end_SAA_indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.SAA.value, index='after', change_type='end')
+        end_SAA_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.SAA.value, index='after', change_type='end')
         closest_end_SAA_index = self.getClosestValue(value=index, array=end_SAA_indices)
-        if operations_schedule[closest_end_SAA_index + 1] != self.MissionStatus.POINTING.value:
+        if operations_schedule[closest_end_SAA_index + 1] != MissionStatus.POINTING.value:
             end_pointing_index = closest_end_SAA_index + 1
-            start_pointing_index = end_pointing_index - self.Helpers.get_pointing_cost()
-            operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.POINTING.value
+            start_pointing_index = end_pointing_index - Helpers.get_pointing_cost()
+            operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
 
     # Done
     def _allocate_pointing_before_end(self, operations_schedule, index):
@@ -927,29 +807,29 @@ class CubeSatMission:
         """
 
         # Edge case for last pointing for charging
-        start_pointing_index = index - self.Helpers.get_pointing_cost() - 1
+        start_pointing_index = index - Helpers.get_pointing_cost() - 1
         end_pointing_index = index
-        operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.POINTING.value
+        operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
 
     # TODO: Comment, docstring
     def _handle_edge_cases_for_downtime(self, operations_schedule):
         
 
 
-        indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.POLAR.value, index='after', change_type='end')
+        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='end')
 
         for _, index in enumerate(indices):
-            if operations_schedule[index] == self.MissionStatus.CHARGING.value:
-                start_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.CHARGING.value, index='after', change_type='start')
-                end_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=self.MissionStatus.CHARGING.value, index='before', change_type='end')
+            if operations_schedule[index] == MissionStatus.CHARGING.value:
+                start_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='start')
+                end_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='end')
                 closes_start_charging_index = self.getClosestValue(value=index, array=start_charging_indices)
                 closest_end_charging_index = self.getClosestValue(value=index, array=end_charging_indices)
                 start_pointing_index = closes_start_charging_index
                 end_pointing_index = closest_end_charging_index + 1
-                operations_schedule[start_pointing_index: end_pointing_index] = self.MissionStatus.DOWNTIME.value
+                operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.DOWNTIME.value
 
-        if np.sum(operations_schedule == self.MissionStatus.OBSERVING.value) > 0:
-            operations_schedule[operations_schedule == self.MissionStatus.OBSERVING.value] = self.MissionStatus.DOWNTIME.value
+        if np.sum(operations_schedule == MissionStatus.OBSERVING.value) > 0:
+            operations_schedule[operations_schedule == MissionStatus.OBSERVING.value] = MissionStatus.DOWNTIME.value
 
 
 
@@ -985,7 +865,7 @@ class CubeSatMission:
 
     def _update_eclipses(self, operations_schedule):
         for eclipse in self.science_mission.eclipses:
-            eclipse_schedule_in_mission = self.Helpers.inclusive_slice(operations_schedule, eclipse.schedule_indices[0], eclipse.schedule_indices[1])
+            eclipse_schedule_in_mission = Helpers.inclusive_slice(operations_schedule, eclipse.schedule_indices[0], eclipse.schedule_indices[1])
             eclipse.operations.status = eclipse_schedule_in_mission
             for i in range(len(eclipse.targets_exp_times)):
                 eclipse.targets_exp_times[i] = np.sum(eclipse_schedule_in_mission == (i - 1)) * self.satellite.time_step_sec
@@ -1054,11 +934,11 @@ class CubeSatMission:
     def findFirstTarget(self, arr, obs):
         if not obs:
             for value in arr:
-                if self.MissionStatus.TARGET2.value == value or self.MissionStatus.TARGET1.value == value:
+                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value:
                     return value
         elif obs:
             for value in arr:
-                if self.MissionStatus.TARGET2.value == value or self.MissionStatus.TARGET1.value == value or self.MissionStatus.OBSERVING.value == value:
+                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value or MissionStatus.OBSERVING.value == value:
                     return value
         return None  # Return None if no such value is found
     
@@ -1166,10 +1046,10 @@ class CubeSatMission:
                 if np.mod(i, 5) == 0:
                     times_plot_lims.append([times[eclipse_start], times[eclipse_end]])
 
-            ax[0].set_yticks([status.value for status in self.MissionStatus], labels=[status.name for status in self.MissionStatus])
+            ax[0].set_yticks([status.value for status in MissionStatus], labels=[status.name for status in MissionStatus])
             ax[0].set_xticks([0])
 
-            for status in self.MissionStatus:
+            for status in MissionStatus:
                 ax[0].plot(times[operations_schedule_bp == status.value], operations_schedule_bp[operations_schedule_bp == status.value], marker = 's', linestyle='')
 
             ax[0].set_ylabel("Status", fontsize = 25)
@@ -1188,9 +1068,9 @@ class CubeSatMission:
                 if np.mod(i, 5) == 0:
                     times_plot_lims.append([times[eclipse_start], times[eclipse_end]])
 
-            ax[1].set_yticks([status.value for status in self.MissionStatus], labels=[status.name for status in self.MissionStatus])
+            ax[1].set_yticks([status.value for status in MissionStatus], labels=[status.name for status in MissionStatus])
 
-            for status in self.MissionStatus:
+            for status in MissionStatus:
                 ax[1].plot(times[operations_schedule_ap == status.value], operations_schedule_ap[operations_schedule_ap == status.value], marker = 's', linestyle='')
 
             ax[1].set_ylabel("Status", fontsize = 25)
@@ -1215,22 +1095,22 @@ class CubeSatMission:
 
         # Plot the operations schedule
         plt.plot(times, eclipse_schedule, drawstyle = 'steps-mid')
-        for status in self.MissionStatus:
+        for status in MissionStatus:
             plt.plot(times[eclipse_schedule == status.value], eclipse_schedule[eclipse_schedule == status.value], marker = 's', linestyle='')
         if len(eclipse.targets_names) > 0:
             plt.plot([], [], label = f'Target 1 = {eclipse.targets_names[0]}. Exp Time = {eclipse.targets_exp_times[0]}', color = 'green')
-            if eclipse.targets_exp_times[0] != np.sum(eclipse_schedule == self.MissionStatus.TARGET1.value) * self.satellite.time_step_sec:
-                print(eclipse.targets_names[0],eclipse.targets_exp_times[0], np.sum(eclipse_schedule == self.MissionStatus.TARGET1.value) * self.satellite.time_step_sec)
+            if eclipse.targets_exp_times[0] != np.sum(eclipse_schedule == MissionStatus.TARGET1.value) * self.satellite.time_step_sec:
+                print(eclipse.targets_names[0],eclipse.targets_exp_times[0], np.sum(eclipse_schedule == MissionStatus.TARGET1.value) * self.satellite.time_step_sec)
                 raise ValueError('The target exposure time does not match the number of slots allocated to the target')
-            if np.any(eclipse_schedule == self.MissionStatus.TARGET2.value):
+            if np.any(eclipse_schedule == MissionStatus.TARGET2.value):
                 plt.plot([], [], label = f'Target 2 = {eclipse.targets_names[1]}. Exp Time = {eclipse.targets_exp_times[1]}', color = 'orange')
-                if eclipse.targets_exp_times[1] != np.sum(eclipse_schedule == self.MissionStatus.TARGET2.value) * self.satellite.time_step_sec:
+                if eclipse.targets_exp_times[1] != np.sum(eclipse_schedule == MissionStatus.TARGET2.value) * self.satellite.time_step_sec:
                     raise ValueError('The target exposure time does not match the number of slots allocated to the target')
             plt.legend(loc = 'best')
         else:
-            plt.plot([], [], label = f'Observation Time = {np.sum(eclipse_schedule == self.MissionStatus.OBSERVING.value)}s', color = 'green')
+            plt.plot([], [], label = f'Observation Time = {np.sum(eclipse_schedule == MissionStatus.OBSERVING.value)}s', color = 'green')
             plt.legend(loc = 'best')
-        plt.yticks([status.value for status in self.MissionStatus], labels=[status.name for status in self.MissionStatus])
+        plt.yticks([status.value for status in MissionStatus], labels=[status.name for status in MissionStatus])
         plt.xticks(rotation = 15)
         plt.grid()
         # plt.xlim(eclipse.operations.time.utc_datetime()[0], eclipse.operations.time.utc_datetime()[-1])
@@ -1254,12 +1134,12 @@ class CubeSatMission:
 
         # Get the final operations schedule
         operations_schedule = self.get_operation_by_name("Final Operations Schedule").status
-        final_operations_in_eclipse = self.Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end)
+        final_operations_in_eclipse = Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end)
 
 
         # Get the data target for the target
         # target = self.science_mission.get_target_by_name(target_name)
-        # target_altitude = self.Helpers.inclusive_slice(target.target_altitude, eclipse_start, eclipse_end)
+        # target_altitude = Helpers.inclusive_slice(target.target_altitude, eclipse_start, eclipse_end)
 
         # Plot the target(s)'s altitudes
         fig, ax = plt.subplots(2, 2, figsize=(10, 10))
@@ -1270,7 +1150,7 @@ class CubeSatMission:
         for i, target_name in enumerate(eclipse.targets_names):
 
             target = self.science_mission.get_target_by_name(target_name)
-            target_altitude = self.Helpers.inclusive_slice(target.target_altitude, eclipse_start, eclipse_end)
+            target_altitude = Helpers.inclusive_slice(target.target_altitude, eclipse_start, eclipse_end)
             target_names.append(target_name)
 
             ax[1][0].plot(times, target_altitude, '--', color = colors[i], label = f'Target: {target.name}')
@@ -1288,7 +1168,7 @@ class CubeSatMission:
         ax[1][0].grid(alpha = 0.3)
 
         # Plot the moon's altitudes
-        moon_altitude = self.Helpers.inclusive_slice(self.satellite.moon_altitudes, eclipse_start, eclipse_end)
+        moon_altitude = Helpers.inclusive_slice(self.satellite.moon_altitudes, eclipse_start, eclipse_end)
         ax[1][1].plot(times, moon_altitude, '--', color = 'yellowgreen')
         ax[1][1].axhline(y = self.satellite.moon_constraint, color = 'olivedrab', label = f'Altitude (Moon) Constraint: {self.satellite.moon_constraint:.2f}')
         ax[1][1].set_title(f'Moon Altitude Throughout Eclipse {eclipse_num}')
@@ -1303,19 +1183,19 @@ class CubeSatMission:
         colors_operations = ['darkgoldenrod', 'firebrick', 'red', 'mediumseagreen', 'black', 'steelblue', 'tab:orange', 'khaki', 'khaki']
 
         ax[0, 0].plot(times, eclipse_schedule, drawstyle='steps-mid')
-        for i, status in enumerate(self.MissionStatus):
+        for i, status in enumerate(MissionStatus):
             ax[0, 0].plot(times[eclipse_schedule == status.value], eclipse_schedule[eclipse_schedule == status.value], marker='s', linestyle='', color = colors_operations[i])
         if len(eclipse.targets_names) > 0:
             ax[0, 0].plot([], [], label=f'Target 1 = {eclipse.targets_names[0]}. Exp Time = {eclipse.targets_exp_times[0]}s', color='firebrick')
-            if eclipse.targets_exp_times[0] != np.sum(eclipse_schedule == self.MissionStatus.TARGET1.value) * self.satellite.time_step_sec:
+            if eclipse.targets_exp_times[0] != np.sum(eclipse_schedule == MissionStatus.TARGET1.value) * self.satellite.time_step_sec:
                 raise ValueError('The target exposure time does not match the number of slots allocated to the target')
-            if np.any(eclipse_schedule == self.MissionStatus.TARGET2.value):
+            if np.any(eclipse_schedule == MissionStatus.TARGET2.value):
                 ax[0, 0].plot([], [], label=f'Target 2 = {eclipse.targets_names[1]}. Exp Time = {eclipse.targets_exp_times[1]}s', color='darkgoldenrod')
-                if eclipse.targets_exp_times[1] != np.sum(eclipse_schedule == self.MissionStatus.TARGET2.value) * self.satellite.time_step_sec:
+                if eclipse.targets_exp_times[1] != np.sum(eclipse_schedule == MissionStatus.TARGET2.value) * self.satellite.time_step_sec:
                     raise ValueError('The target exposure time does not match the number of slots allocated to the target')
         ax[0, 0].legend(loc='best')
-        ax[0, 0].set_yticks([status.value for status in self.MissionStatus])
-        ax[0, 0].set_yticklabels([status.name for status in self.MissionStatus])
+        ax[0, 0].set_yticks([status.value for status in MissionStatus])
+        ax[0, 0].set_yticklabels([status.name for status in MissionStatus])
         ax[0, 0].tick_params(axis='x', rotation = 25)
         ax[0, 0].grid()
         ax[0, 0].set_xlabel('Time [UTC]')
@@ -1328,60 +1208,60 @@ class CubeSatMission:
         ax[0][1].coastlines()
 
         # Plot the groundtrack
-        plot_lat, plot_lon = self._insert_plot_nans(self.Helpers.inclusive_slice(self.satellite.latitudes, eclipse_start, eclipse_end), self.Helpers.inclusive_slice(self.satellite.longitudes, eclipse_start, eclipse_end))
-        ax[0][1].plot(plot_lon, plot_lat, color = self.MissionStatus.plot_color(), linewidth = 1)
+        plot_lat, plot_lon = self._insert_plot_nans(Helpers.inclusive_slice(self.satellite.latitudes, eclipse_start, eclipse_end), Helpers.inclusive_slice(self.satellite.longitudes, eclipse_start, eclipse_end))
+        ax[0][1].plot(plot_lon, plot_lat, color = MissionStatus.plot_color(), linewidth = 1)
 
         # Plot the SAA groundtrack coordinates and area
         saa_lat_area, saa_lon_area = self._insert_plot_nans(self.satellite.saa_latitudes_area, self.satellite.saa_longitudes_area)
-        ax[0][1].plot(saa_lon_area, saa_lat_area, color = self.MissionStatus.plot_color(self.MissionStatus.SAA.value), linewidth = 6)
+        ax[0][1].plot(saa_lon_area, saa_lat_area, color = MissionStatus.plot_color(MissionStatus.SAA.value), linewidth = 6)
 
         saa_path = Path(list(zip(self.satellite.saa_longitudes_area, self.satellite.saa_latitudes_area)))
         in_saa = saa_path.contains_points(list(zip(plot_lon, plot_lat)))
 
         saa_lat = plot_lat[in_saa]
         saa_lon = plot_lon[in_saa]
-        ax[0][1].plot(saa_lon, saa_lat, color = self.MissionStatus.plot_color(self.MissionStatus.SAA.value), linewidth = 6)
+        ax[0][1].plot(saa_lon, saa_lat, color = MissionStatus.plot_color(MissionStatus.SAA.value), linewidth = 6)
 
         # Plot the polar keepout (pk) coordinates
         pk_upper_lim = 90 - self.satellite.polar_constraint
         pk_latitude_upper = plot_lat[plot_lat > pk_upper_lim]
         pk_longitude_upper = plot_lon[plot_lat > pk_upper_lim]
-        ax[0][1].plot(pk_longitude_upper, pk_latitude_upper, color = self.MissionStatus.plot_color(self.MissionStatus.POLAR.value), linewidth = 6)
+        ax[0][1].plot(pk_longitude_upper, pk_latitude_upper, color = MissionStatus.plot_color(MissionStatus.POLAR.value), linewidth = 6)
 
         pk_lower_lim = -90 + self.satellite.polar_constraint
         pk_latitude_lower = plot_lat[plot_lat < pk_lower_lim]
         pk_longitude_lower = plot_lon[plot_lat < pk_lower_lim]
-        ax[0][1].plot(pk_longitude_lower, pk_latitude_lower, color = self.MissionStatus.plot_color(self.MissionStatus.POLAR.value), linewidth = 6)
+        ax[0][1].plot(pk_longitude_lower, pk_latitude_lower, color = MissionStatus.plot_color(MissionStatus.POLAR.value), linewidth = 6)
 
         # Plot the ground station accesses
-        donwlink_schedule = self.Helpers.inclusive_slice(self.get_schedule_by_name("Ground Stations Schedule").status, eclipse_start, eclipse_end)
+        donwlink_schedule = Helpers.inclusive_slice(self.get_schedule_by_name("Ground Stations Schedule").status, eclipse_start, eclipse_end)
         gs_lat, gs_lon = self._insert_plot_nans(plot_lat[donwlink_schedule], plot_lon[donwlink_schedule])
-        ax[0][1].plot(gs_lon, gs_lat, color = self.MissionStatus.plot_color(self.MissionStatus.DOWNLINK.value), linewidth = 6)
+        ax[0][1].plot(gs_lon, gs_lat, color = MissionStatus.plot_color(MissionStatus.DOWNLINK.value), linewidth = 6)
 
         # Plot pointing
-        pointing_schedule = final_operations_in_eclipse == self.MissionStatus.POINTING.value
+        pointing_schedule = final_operations_in_eclipse == MissionStatus.POINTING.value
         pointing_lat, pointing_lon = self._insert_plot_nans(plot_lat[pointing_schedule], plot_lon[pointing_schedule])
-        ax[0][1].plot(pointing_lon, pointing_lat, color = self.MissionStatus.plot_color(self.MissionStatus.POINTING.value), linewidth = 6)
+        ax[0][1].plot(pointing_lon, pointing_lat, color = MissionStatus.plot_color(MissionStatus.POINTING.value), linewidth = 6)
 
         # Plot target 1
-        target1_schedule = final_operations_in_eclipse == self.MissionStatus.TARGET1.value
+        target1_schedule = final_operations_in_eclipse == MissionStatus.TARGET1.value
         target1_lat, target1_lon = self._insert_plot_nans(plot_lat[target1_schedule], plot_lon[target1_schedule])
-        ax[0][1].plot(target1_lon, target1_lat, self.MissionStatus.plot_color(self.MissionStatus.TARGET1.value), linewidth = 6)
+        ax[0][1].plot(target1_lon, target1_lat, MissionStatus.plot_color(MissionStatus.TARGET1.value), linewidth = 6)
 
         # Plot target 2
-        target2_schedule = final_operations_in_eclipse == self.MissionStatus.TARGET2.value
+        target2_schedule = final_operations_in_eclipse == MissionStatus.TARGET2.value
         target2_lat, target2_lon = self._insert_plot_nans(plot_lat[target2_schedule], plot_lon[target2_schedule])
-        ax[0][1].plot(target2_lon, target2_lat, color = self.MissionStatus.plot_color(self.MissionStatus.TARGET2.value), linewidth = 6)
+        ax[0][1].plot(target2_lon, target2_lat, color = MissionStatus.plot_color(MissionStatus.TARGET2.value), linewidth = 6)
 
         # Plot charging
-        charging_schedule = final_operations_in_eclipse == self.MissionStatus.CHARGING.value
+        charging_schedule = final_operations_in_eclipse == MissionStatus.CHARGING.value
         charging_lat, charging_lon = self._insert_plot_nans(plot_lat[charging_schedule], plot_lon[charging_schedule])
-        ax[0][1].plot(charging_lon, charging_lat, color = self.MissionStatus.plot_color(self.MissionStatus.CHARGING.value), linewidth = 6)
+        ax[0][1].plot(charging_lon, charging_lat, color = MissionStatus.plot_color(MissionStatus.CHARGING.value), linewidth = 6)
 
         # Plot downtime
-        downtime_schedule = final_operations_in_eclipse == self.MissionStatus.DOWNTIME.value
+        downtime_schedule = final_operations_in_eclipse == MissionStatus.DOWNTIME.value
         downtime_lat, downtime_lon = self._insert_plot_nans(plot_lat[downtime_schedule], plot_lon[downtime_schedule])
-        ax[0][1].plot(downtime_lon, downtime_lat, color = self.MissionStatus.plot_color(self.MissionStatus.DOWNTIME.value), linewidth = 6)
+        ax[0][1].plot(downtime_lon, downtime_lat, color = MissionStatus.plot_color(MissionStatus.DOWNTIME.value), linewidth = 6)
 
         ax[0][1].set_xlim([min(plot_lon) - 15, max(plot_lon) + 15])
         ax[0][1].set_ylim([min(plot_lat) - 15, max(plot_lat) + 15])
@@ -1403,8 +1283,8 @@ class CubeSatMission:
         if len(eclipse.targets_names) == 1:
             print_dict['Target'] = eclipse.targets_names[0]
             print_dict['Target Exposure Time (s)'] = eclipse.targets_exp_times[0]
-            print_dict['Lat of Start of Exposure'] = self.satellite.latitudes[eclipse.schedule_indices[0] + (eclipse.operations.status == self.MissionStatus.TARGET1)[0]]
-            print_dict['Lon of Start of Exposure'] = self.satellite.longitudes[eclipse.schedule_indices[0] + (eclipse.operations.status == self.MissionStatus.TARGET1)[0]]
+            print_dict['Lat of Start of Exposure'] = self.satellite.latitudes[eclipse.schedule_indices[0] + (eclipse.operations.status == MissionStatus.TARGET1)[0]]
+            print_dict['Lon of Start of Exposure'] = self.satellite.longitudes[eclipse.schedule_indices[0] + (eclipse.operations.status == MissionStatus.TARGET1)[0]]
         elif len(eclipse.targets_names) == 2:
             for i in range(2):
                 print_dict[f'Target {i}'] = eclipse.targets_names[i]

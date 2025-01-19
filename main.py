@@ -8,7 +8,6 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 warnings.filterwarnings("ignore", category=UserWarning, message="No artists with labels found to put in legend")
 
-
 %reload_ext autoreload
 %autoreload 2
 from PlanningObjects.CubeSatMission import CubeSatMission
