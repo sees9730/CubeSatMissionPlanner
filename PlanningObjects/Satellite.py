@@ -4,8 +4,10 @@ import pandas as pd
 import numpy as np
 from skyfield.api import EarthSatellite, load, wgs84
 import logging
+from matplotlib.path import Path
 
 class Satellite:
+    # TODO: FIX THIS DESCRIPTION
     """
     A class to represent a satellite and its position data over time.
     
@@ -27,17 +29,22 @@ class Satellite:
         Start time of the data collection or observation period.
     end_time : datetime
         End time of the data collection or observation period.
-    time_step : int
+    time_step_sec : int
         Time step between data points, in seconds.
     """
-    
+
     def __init__(self,
                  tle_url: str,
                  tle_file: str,
                  satellite_name: str,
                  start_time: datetime,
                  end_time: datetime,
-                 time_step: int):
+                 time_step_sec: int,
+                 saa_latitudes_area: list,
+                 saa_longitudes_area: list,
+                 polar_constraint: int,
+                 earth_constraint: int,
+                 moon_constraint: int):
         """
         Initialize a new Satellite object.
         
@@ -53,7 +60,7 @@ class Satellite:
             The start time of the simulation.
         end_time : datetime
             The end time of the simulation.
-        time_step : int
+        time_step_sec : int
             Time step for calculating satellite positions, in seconds.
         """
         self.tle_url = tle_url
@@ -61,10 +68,34 @@ class Satellite:
         self.satellite_name = satellite_name
         self.start_time = start_time
         self.end_time = end_time
-        self.time_step = time_step
+        self.time_step_sec = time_step_sec
+        self.latitudes = []
+        self.longitudes = []
+        self.altitudes = []
+        self.times = []
         
+        # Initialize the physical constraints
+        self.saa_latitudes_area = saa_latitudes_area
+        self.saa_longitudes_area = saa_longitudes_area
+        self.polar_constraint = polar_constraint
+        self.earth_constraint = earth_constraint
+        self.moon_constraint = moon_constraint
+        self.moon_altitudes = []
+        
+        # Initialize the WGS84 coordinate system
+        self.wgs84 = wgs84
+        
+        # Load the DE421 ephemeris and get the Earth and Moon ephemeris
+        self.ephemeris = load('de421.bsp')
+        self.earth_ephemeris = self.ephemeris['earth']
+        self.moon_ephemeris = self.ephemeris['moon']
+
+        # Calculate the satellite's position over the specified time interval
         self.earth_satellite = self._create_earth_satellite()
         self._calculate_satellite_positions()
+
+        # Calculate the SAA ground track for the specified time interval
+        self._get_saa_groundtrack_coordinates()
 
     def _create_earth_satellite(self) -> EarthSatellite:
         """
@@ -170,11 +201,11 @@ class Satellite:
         end_time_dt = pd.to_datetime(self.end_time).to_pydatetime()
 
         total_seconds = (end_time_dt - start_time_dt).total_seconds()
-        num_steps = int(total_seconds / self.time_step) + 1
+        num_steps = int(total_seconds / self.time_step_sec) + 1
 
         # Generate array of time points
         return ts.utc(start_time_dt.year, start_time_dt.month, start_time_dt.day,
-                      start_time_dt.hour, start_time_dt.minute + (np.arange(num_steps) * self.time_step / 60))
+                      start_time_dt.hour, start_time_dt.minute + (np.arange(num_steps) * self.time_step_sec / 60))
 
     def _convert_geocentric_to_lat_lon_alt(self, geocentric, times) -> None:
         """
@@ -191,7 +222,20 @@ class Satellite:
         subpoint = wgs84.subpoint(geocentric)
 
         # Store the positions and times in the class attributes
-        self.latitudes = subpoint.latitude.degrees
-        self.longitudes = subpoint.longitude.degrees
-        self.altitudes = subpoint.elevation.km
+        self.latitudes = np.array(subpoint.latitude.degrees)
+        self.longitudes = np.array(subpoint.longitude.degrees)
+        self.altitudes = np.array(subpoint.elevation.m)
         self.times = times
+
+    # def _calculate_ground_station_visibilities(self) -> None:
+
+    def _get_saa_groundtrack_coordinates(self) -> None:
+        """
+        Get the SAA groundtrack times
+        """
+        # Create a path and find the lat and lon points that are in the SAA
+        saa_path = Path(list(zip(self.saa_longitudes_area, self.saa_latitudes_area)))
+        in_saa = saa_path.contains_points(list(zip(self.longitudes, self.latitudes)))
+
+        self.saa_latitudes = np.array(self.latitudes[in_saa])
+        self.saa_longitudes = np.array(self.longitudes[in_saa])

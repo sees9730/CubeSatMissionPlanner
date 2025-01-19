@@ -3,16 +3,41 @@
 # import PlanningObjects.UsefulFunctions
 # from PlanningObjects.MissionConfig import MissionConfig
 from PlanningObjects.CubeSatMission import CubeSatMission
+import logging
 # import PlanningObjects.Satellite
 
 # def main():
+
+# # Set up log file
+# logging.basicConfig(
+#     filename='app.log',
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#     filemode='w'
+# )
+# console_handler = logging.StreamHandler()
 
 # Load the Excel file
 excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
 
 # Create the MissionConfig object
 cubesat_mission = CubeSatMission(excel_file_path)
-print(cubesat_mission.satellite.altitudes)
+cubesat_mission._plot_satellite_positions()
+cubesat_mission._plot_operations()
+cubesat_mission.plot_eclipse_summary(14)
+
+
+# import plotly.graph_objects as go
+
+# fig = go.Figure(go.Scattergeo())
+# fig.update_geos(projection_type="orthographic")
+# fig.update_layout(height=300, margin={"r":0,"t":0,"l":0,"b":0})
+# fig.show()    
+
+# if __name__ == '__main__':
+#     main()
+# cubesat_mission.satellite.altitudes
+# print(cubesat_mission.satellite.altitudes)
 # mission_config = MissionConfig(excel_file_path)
 # satellite = mission_config.createSatelliteObject()
 
@@ -30,6 +55,8 @@ print(cubesat_mission.satellite.altitudes)
 
 
 # Utilities.Objects.Schedule(mission_config.plan_info)
+
+
 
 
 
