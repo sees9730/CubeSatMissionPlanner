@@ -168,7 +168,8 @@ class CubeSatMission:
             
     
 
-    def __init__(self, excel_file_path: str):
+    def __init__(self, excel_file_path: str,
+                 debug_vars: Dict[str, bool]):
                 #  science_mission: 'ScienceMission',
                 #  mission_config: 'MissionConfig',
                 #  satellite: 'Satellite',
@@ -177,6 +178,8 @@ class CubeSatMission:
                 #  operations: 'Schedule'):
 
         # Initialize a new CubeSatMission object
+        self.pointing_debug = debug_vars['Pointing Debug']
+
         self.schedules = []
         self._create_mission_config(excel_file_path)
         self._create_satellite()
@@ -439,7 +442,7 @@ class CubeSatMission:
                                         self.satellite.time_step_sec, self.satellite.times, operations_schedule_bp, self.MissionStatus))
 
         # Allocate pointing operations and choose targets to observe
-        self._allocate_pointing_operations(operations_schedule)
+        self._allocate_pointing_operations(operations_schedule, self.pointing_debug)
 
         # Allocate pointing windows for charging
         self._allocate_pointing_windows_for_charging(operations_schedule)
@@ -668,7 +671,7 @@ class CubeSatMission:
             eclipse_schedule = np.copy(self.Helpers.inclusive_slice(operations_schedule, eclipse_start, eclipse_end))
             eclipse.operations.status = eclipse_schedule
 
-    def _allocate_pointing_operations(self, operations_schedule):
+    def _allocate_pointing_operations(self, operations_schedule, pointing_debug):
         """Allocate the pointing operations and choose targets to observe."""
         min_exp_time = min([survey.target_min_exp_time for survey in self.science_mission.surveys])
 
@@ -676,23 +679,24 @@ class CubeSatMission:
             eclipse_schedule = eclipse.operations.status
             eclipse_start = eclipse.schedule_indices[0]
             eclipse_end = eclipse.schedule_indices[1]
-            self.plot_eclipse_operations(eclipse_num)
+            if pointing_debug:
+                self.plot_eclipse_operations(eclipse_num)
 
-            self.update_targets_priorities(eclipse)
+            self.update_targets_priorities(eclipse, pointing_debug)
 
             # Allocate the pointing operations if there is at least one target available
             if np.any(eclipse_schedule == self.MissionStatus.OBSERVING.value):
                 target_num = self.MissionStatus.TARGET1.value
                 for target_name, target_schedule in eclipse.targets_available.items():
                     if np.any(target_schedule):
-                        self._allocate_target_pointing_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_schedule, target_num, eclipse_start, eclipse_end, min_exp_time)
+                        self._allocate_target_pointing_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_schedule, target_num, eclipse_start, eclipse_end, min_exp_time, pointing_debug)
                         # Break if all targets pointing windows have been allocated
                         if target_num == -3:
                             break
             else:
                 print(f'Eclipse {eclipse_num} has no targets available')
 
-    def _allocate_target_pointing_operations(self, eclipse, eclipse_schedule, operations_schedule, target_name, target_schedule, target_num, eclipse_start, eclipse_end, min_exp_time):
+    def _allocate_target_pointing_operations(self, eclipse, eclipse_schedule, operations_schedule, target_name, target_schedule, target_num, eclipse_start, eclipse_end, min_exp_time, pointing_debug):
         """Allocate a target in the eclipse schedule."""
         exception = False
 
@@ -712,7 +716,7 @@ class CubeSatMission:
         if np.sum(free_target_slots) != 0:
             if (target_num == self.MissionStatus.TARGET1.value) and ((np.sum(free_target_slots) / np.sum(eclipse_schedule == self.MissionStatus.OBSERVING.value)) >= 0.8) and enough_time:
                 eclipse_schedule[free_target_slots == 1] = target_num
-                self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end)
+                self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug)
                 target_num = -3 # Break out of the outer loop
             
             # Only allocate pointing operations if there is enough time for a second target
@@ -736,7 +740,7 @@ class CubeSatMission:
                         eclipse_schedule[pointing_moves == 1] = self.MissionStatus.POINTING.value
 
                 # Update the eclipse and operations
-                self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end)
+                self._update_eclipse_and_operations(eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug)
 
                 # Update the target number
                 target_num -= 1
@@ -751,7 +755,7 @@ class CubeSatMission:
             index_end_pointing = index_start_pointing + self.Helpers.get_pointing_cost()
         return index_start_pointing, index_end_pointing
 
-    def _update_eclipse_and_operations(self, eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end):
+    def _update_eclipse_and_operations(self, eclipse, eclipse_schedule, operations_schedule, target_name, target_num, eclipse_start, eclipse_end, pointing_debug):
         """Update the eclipse and operations schedule."""
 
         # Update the eclipse's properties for the eclipse object
@@ -772,7 +776,8 @@ class CubeSatMission:
         operations_schedule[eclipse_start: eclipse_end + 1] = eclipse_schedule
         
         # Plot the eclipse's operations
-        self.plot_eclipse_operations(eclipse.eclipse_number)
+        if pointing_debug:
+            self.plot_eclipse_operations(eclipse.eclipse_number)
 
     # Done
     def _allocate_pointing_windows_for_charging(self, operations_schedule):
@@ -949,7 +954,7 @@ class CubeSatMission:
 
 
     # TODO: Comment, docstring
-    def update_targets_priorities(self, eclipse):
+    def update_targets_priorities(self, eclipse, pointing_debug):
         """Update the priorities of the targets based on their exposure times."""
         if len(eclipse.targets_available) != 0:
             max_exposure_time = max(np.sum(list(eclipse.targets_available.values()), axis=1) * self.satellite.time_step_sec)
@@ -971,10 +976,12 @@ class CubeSatMission:
             sorted_targets = sorted(eclipse.targets_available.items(), key=lambda item: self.science_mission.get_target_by_name(item[0]).eclipse_priority)
             eclipse.targets_available = dict(sorted_targets)
 
-            print("After sorting:")
-            for target_name in eclipse.targets_available.keys():
-                target = self.science_mission.get_target_by_name(target_name)
-                print(f"Target: {target_name}, Priority: {target.eclipse_priority}")
+            # Print the updated priorities
+            if pointing_debug:
+                print("After sorting:")
+                for target_name in eclipse.targets_available.keys():
+                    target = self.science_mission.get_target_by_name(target_name)
+                    print(f"Target: {target_name}, Priority: {target.eclipse_priority}")
 
     def _update_eclipses(self, operations_schedule):
         for eclipse in self.science_mission.eclipses:

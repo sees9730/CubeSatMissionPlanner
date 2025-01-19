@@ -2,6 +2,15 @@
 # import Utilities.Objects
 # import PlanningObjects.UsefulFunctions
 # from PlanningObjects.MissionConfig import MissionConfig
+import warnings
+
+# Suppress specific warning
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+warnings.filterwarnings("ignore", category=UserWarning, message="No artists with labels found to put in legend")
+
+
+%reload_ext autoreload
+%autoreload 2
 from PlanningObjects.CubeSatMission import CubeSatMission
 import logging
 # import PlanningObjects.Satellite
@@ -17,11 +26,15 @@ import logging
 # )
 # console_handler = logging.StreamHandler()
 
+# Flags for outputting debugging plots/prints
+debug_vars = {}
+debug_vars['Pointing Debug'] = False
+
 # Load the Excel file
 excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
 
 # Create the MissionConfig object
-cubesat_mission = CubeSatMission(excel_file_path)
+cubesat_mission = CubeSatMission(excel_file_path, debug_vars)
 cubesat_mission._plot_satellite_positions()
 cubesat_mission._plot_operations()
 cubesat_mission.plot_eclipse_summary(14)
@@ -114,3 +127,4 @@ cubesat_mission.plot_eclipse_summary(14)
 
 # if __name__ == '__main__':
 #     main()
+# %%
