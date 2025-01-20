@@ -1,71 +1,189 @@
 import numpy as np
 from typing import Dict
+from Utilities.MissionStatus import MissionStatus
+from scipy.ndimage import binary_dilation
 
 class Helpers:
 
-        def inclusive_slice(array: np.ndarray, start: int, end: int) -> np.ndarray:
-            """Return a slice of the array from start to end, inclusive."""
-            return array[start:end + 1]
-        
-        def get_pointing_cost() -> int:
-            return 80
-        
-        def is_inside_eclipse(satellite, eclipses, time):
-            
-            # Get the times
-            times = satellite.times
-
-            # Get the indices of the eclipses
-            eclipse_indices = np.array([eclipse.schedule_indices for eclipse in eclipses])
-            
-            # Find the index of the given time in the time schedule
-            time_index = np.where(times == time)[0]
-
-            # If the time is not found in the time schedule, it's definitely not in an eclipse
-            if not time_index.size:
-                return False, None
-
-            time_index = time_index[0]  # Extract the index from the array
-
-            # Determine if the time index is inside any of the eclipse index ranges
-            inside_eclipse = np.logical_and(
-                eclipse_indices[:, 0] <= time_index,
-                time_index <= eclipse_indices[:, 1]
-            )
-
-            # Return if the time is inside an eclipse
-            if any(inside_eclipse):
-                eclipse_num = [eclipse.eclipse_number for eclipse, inside in zip(eclipses, inside_eclipse) if inside]
-                return True, eclipse_num[0]
-
-            return False, None
-        
-        def get_energy_dict(mission_config: 'MissionConfig') -> Dict[str, int]:
-
-            # Change the column names to more readable/code friendly names
-            ColumnMappingPowerBudget = {
-                'Initial Charge [J]': 'INITIAL_CHARGE',
-                'Maximum Charge [J]': 'MAXIMUM_CHARGE',
-                'Charging [W]': 'CHARGING',
-                'Pointing [W]': 'POINTING',
-                'Observation [W]': 'TARGET1',
-                'Downlink [W]': 'DOWNLINK',
-                'Idle [W]': 'DOWNTIME'
-            }
-
-            # Get the energy data frame and rename the columns
-            df = mission_config.power_info
-            df.rename(columns = ColumnMappingPowerBudget, inplace = True)
-
-            # Add the extra columns for equal power values
-            df['TARGET2'] = df['TARGET1']
-            df['SAA'] = df['DOWNTIME']
-            df['POLAR'] = df['DOWNTIME']
-
-            # Convert the DataFrame to a dictionary and extract the first value from each list (assuming single-value columns)
-            data_dict = df.to_dict(orient='list')
-            result_dict = {k: v[0] for k, v in data_dict.items()}
-
-            return result_dict
-            
+    def inclusive_slice(array: np.ndarray, start: int, end: int) -> np.ndarray:
+        """Return a slice of the array from start to end, inclusive."""
+        return array[start:end + 1]
     
+    def get_pointing_cost() -> int:
+        return 80
+    
+    def is_inside_eclipse(satellite, eclipses, time):
+        
+        # Get the times
+        times = satellite.times
+
+        # Get the indices of the eclipses
+        eclipse_indices = np.array([eclipse.schedule_indices for eclipse in eclipses])
+        
+        # Find the index of the given time in the time schedule
+        time_index = np.where(times == time)[0]
+
+        # If the time is not found in the time schedule, it's definitely not in an eclipse
+        if not time_index.size:
+            return False, None
+
+        time_index = time_index[0]  # Extract the index from the array
+
+        # Determine if the time index is inside any of the eclipse index ranges
+        inside_eclipse = np.logical_and(
+            eclipse_indices[:, 0] <= time_index,
+            time_index <= eclipse_indices[:, 1]
+        )
+
+        # Return if the time is inside an eclipse
+        if any(inside_eclipse):
+            eclipse_num = [eclipse.eclipse_number for eclipse, inside in zip(eclipses, inside_eclipse) if inside]
+            return True, eclipse_num[0]
+
+        return False, None
+    
+    def get_energy_dict(mission_config: 'MissionConfig') -> Dict[str, int]:
+
+        # Change the column names to more readable/code friendly names
+        ColumnMappingPowerBudget = {
+            'Initial Charge [J]': 'INITIAL_CHARGE',
+            'Maximum Charge [J]': 'MAXIMUM_CHARGE',
+            'Charging [W]': 'CHARGING',
+            'Pointing [W]': 'POINTING',
+            'Observation [W]': 'TARGET1',
+            'Downlink [W]': 'DOWNLINK',
+            'Idle [W]': 'DOWNTIME'
+        }
+
+        # Get the energy data frame and rename the columns
+        df = mission_config.power_info
+        df.rename(columns = ColumnMappingPowerBudget, inplace = True)
+
+        # Add the extra columns for equal power values
+        df['TARGET2'] = df['TARGET1']
+        df['SAA'] = df['DOWNTIME']
+        df['POLAR'] = df['DOWNTIME']
+
+        # Convert the DataFrame to a dictionary and extract the first value from each list (assuming single-value columns)
+        data_dict = df.to_dict(orient='list')
+        result_dict = {k: v[0] for k, v in data_dict.items()}
+
+        return result_dict
+    
+    ## TODO: update docstring and look into refactor
+    def get_moves_outside(array, pointing_cost):
+        """
+            Get the outside pointing slots for a given array.
+
+            Args:
+                array (numpy.ndarray): The operation schedule.
+                pointing_cost (int): The number of move slots.
+
+            Returns:
+                numpy.ndarray: The move slots mask.
+
+            Description:
+                This function takes an operation schedule and a pointing cost as input. It creates a copy of the operation schedule to avoid modifying the original. It then performs binary dilation on the copied schedule to expand it by the number of move slots. The move slots mask is generated by identifying the expanded parts not in the original schedule. The function returns the pointing slots mask.
+        """
+        
+        # Create a copy of the operation schedule to avoid modifying the original
+        array_copy = array.copy()
+
+        # Perform binary dilation to expand the operation schedule by the number of pointing slots
+        expanded_schedule = binary_dilation(array_copy,
+                                            iterations = pointing_cost,
+                                            structure = np.array([True, True, True]))
+
+        # Generate the pointing slots mask by identifying the expanded parts not in the original schedule
+        pointing_moves_mask = (expanded_schedule == 1) & (array == 0)
+
+        return pointing_moves_mask
+
+
+    def find_first_target(arr, obs):
+        if not obs:
+            for value in arr:
+                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value:
+                    return value
+        elif obs:
+            for value in arr:
+                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value or MissionStatus.OBSERVING.value == value:
+                    return value
+        return None  # Return None if no such value is found
+    
+    def get_closest_value(value, array):
+        # Ensure the value is not None
+        if value is None:
+            raise ValueError('value must not be None')
+        
+        # Ensure the array is not empty
+        if len(array) == 0:
+            raise ValueError('The array must not be empty')
+        
+        # Calculate the absolute differences between the array elements and the target value
+        diff = abs(np.array(array) - value)
+        
+        # Find the index of the smallest difference
+        min_val_index = np.argmin(diff)
+        
+        # Return the array element at the index of the smallest difference
+        return array[min_val_index]
+
+        
+    def get_change_indices(schedule, value=None, index='', change_type=''):
+        """ 
+        Finds indices in the schedule where a change occurs, based on the given parameters.
+
+        Args:
+            schedule (numpy.ndarray): The input array representing the schedule.
+            value: The value to check for changes (default is None, meaning any change).
+            index: Specifies whether to find changes 'before' or 'after' occurrences of the value 
+                (default is '', meaning no index restriction).
+            change_type: Specifies whether to find the 'start', 'end', or 'both' points of a change 
+                        (default is '', meaning any change).
+
+        Returns:
+            numpy.ndarray: An array of indices where the specified change occurs.
+
+        Raises:
+            ValueError: If invalid values are provided for 'index' or 'change_type'.
+        """
+
+        # Input validation
+        if index not in ['before', 'after']:
+            raise ValueError("index must be either 'before' or 'after'")
+        elif change_type not in ['start', 'end', 'both']:
+            raise ValueError("change_type must be either 'start', 'end', or 'both'")
+
+        if value is None:
+            # Detect any change in value
+            changes = np.diff(schedule) != 0 
+
+            # Handle 'before' and 'after' cases
+            result = np.where(changes)[0]
+
+            if index == 'after':
+                result = result + 1  # Shift indices by 1 to get the index after the change
+                # Ensure we include 0 if there's a change at the beginning
+                if changes[0]:
+                    result = np.concatenate(([0], result))
+                result = result[result < len(schedule)]  # Exclude out-of-bounds indices
+            elif index == 'before':
+                if changes[0]:
+                    result = np.concatenate(([0], result)) 
+
+            return result
+        else:
+            # Detect changes to/from the specified value
+            condition = np.array(schedule) == value
+            condition = np.concatenate(([0], condition)) if index == 'after' else np.concatenate((condition, [0]))
+
+        if change_type == 'both':
+            return np.where(np.diff(condition))[0]  # Return both start and end indices
+        elif change_type == 'start':
+            return np.where(np.diff(condition) == 1)[0]
+        elif change_type == 'end':
+            return np.where(np.diff(condition) == -1)[0]
+
+
+        

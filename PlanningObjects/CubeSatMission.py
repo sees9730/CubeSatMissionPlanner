@@ -19,13 +19,9 @@ import numpy as np
 import cartopy.crs as ccrs
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
-import cartopy.feature as cfeature
 from skyfield.api import Star
-from enum import Enum
-import pandas as pd
 # import time
 import datetime
-from scipy.ndimage import binary_dilation
 from scipy.interpolate import make_interp_spline
 
 class CubeSatMission:
@@ -345,7 +341,7 @@ class CubeSatMission:
 
         # Get the indices of the changes in the operations schedule
         operations_schedule = self.get_operation_by_name("Final Operations Schedule").status
-        change_indices = self.getChangeIndices(operations_schedule, index = 'after', change_type = 'both')
+        change_indices = Helpers.get_change_indices(operations_schedule, index = 'after', change_type = 'both')
         change_indices = np.concatenate(([0], change_indices))  # Include the starting index
 
         # Get the net eneregy dictionary
@@ -541,7 +537,7 @@ class CubeSatMission:
         operations_schedule[downlink_schedule] = MissionStatus.DOWNLINK.value
 
         # Allocate the pointing windows for downlink
-        dilated_downlink = self.getMovesOutside(operations_schedule == MissionStatus.DOWNLINK.value, pointing_cost=Helpers.get_pointing_cost())
+        dilated_downlink = Helpers.get_moves_outside(operations_schedule == MissionStatus.DOWNLINK.value, pointing_cost=Helpers.get_pointing_cost())
         operations_schedule[dilated_downlink == 1] = MissionStatus.POINTING.value
 
         # Update the eclipses
@@ -606,11 +602,11 @@ class CubeSatMission:
                 other_target_size = np.sum(eclipse_schedule == other_target_num)
 
                 if other_target_size * self.satellite.time_step_sec >= min_exp_time:
-                    first_target_num = self.findFirstTarget(eclipse_schedule, 1)
+                    first_target_num = Helpers.find_first_target(eclipse_schedule, 1)
                     index_start_pointing, index_end_pointing = self._get_pointing_indices(eclipse_schedule, target_num, other_target_num, first_target_num)
 
                     if index_end_pointing < len(eclipse_schedule) and eclipse_schedule[index_end_pointing] != target_num:
-                        indices = self.getChangeIndices(eclipse_schedule, target_num, 'after', 'both')
+                        indices = Helpers.get_change_indices(eclipse_schedule, target_num, 'after', 'both')
                         visibility_start_index, visibility_end_index = indices[0], indices[1]
                         eclipse_schedule[visibility_start_index: visibility_end_index] = MissionStatus.DOWNTIME.value
                         exception = True
@@ -628,10 +624,10 @@ class CubeSatMission:
     def _get_pointing_indices(self, eclipse_schedule, target_num, other_target_num, first_target_num):
         """Get the start and end indices for pointing."""
         if first_target_num == target_num:
-            index_end_pointing = self.getChangeIndices(eclipse_schedule, other_target_num, 'after', 'start')[0]
+            index_end_pointing = Helpers.get_change_indices(eclipse_schedule, other_target_num, 'after', 'start')[0]
             index_start_pointing = index_end_pointing - Helpers.get_pointing_cost()
         else:
-            index_start_pointing = self.getChangeIndices(eclipse_schedule, target_num, 'after', 'start')[0]
+            index_start_pointing = Helpers.get_change_indices(eclipse_schedule, target_num, 'after', 'start')[0]
             index_end_pointing = index_start_pointing + Helpers.get_pointing_cost()
         return index_start_pointing, index_end_pointing
 
@@ -668,7 +664,7 @@ class CubeSatMission:
         """
 
         # Get the indices before you start charging (get the last status before you start charging)
-        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='start')
+        indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='start')
 
         # See detailed visualization inside each function
         for _, index in enumerate(indices):
@@ -684,7 +680,7 @@ class CubeSatMission:
                 self._allocate_pointing_if_possible(operations_schedule, index)
 
         # Get the indices after you end charging
-        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='end')
+        indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='end')
 
         # See detailed visualization inside each function
         for index in indices:
@@ -710,8 +706,8 @@ class CubeSatMission:
         # After: [T T T T P  P  C C]
 
         # Get the index of the start of the closest downtime and mark it that as the beginning of the pointing 
-        start_downtime_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.DOWNTIME.value, index='after', change_type='start')
-        closest_start_downtime_index = self.getClosestValue(value=index, array=start_downtime_indices)
+        start_downtime_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.DOWNTIME.value, index='after', change_type='start')
+        closest_start_downtime_index = Helpers.get_closest_value(value=index, array=start_downtime_indices)
         start_pointing_index = closest_start_downtime_index
         end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
         operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
@@ -731,8 +727,8 @@ class CubeSatMission:
         # Get the status of what comes before the charging window (but after the pointing window detected) and mark it as charging
         status_after_pointing = operations_schedule[index]
         if status_after_pointing not in (MissionStatus.TARGET1, MissionStatus.TARGET2):
-            start_status_indices = self.getChangeIndices(schedule=operations_schedule, value=status_after_pointing, index='after', change_type='start')
-            closest_start_status_index = self.getClosestValue(value=index - Helpers.get_pointing_cost(), array=start_status_indices)
+            start_status_indices = Helpers.get_change_indices(schedule=operations_schedule, value=status_after_pointing, index='after', change_type='start')
+            closest_start_status_index = Helpers.get_closest_value(value=index - Helpers.get_pointing_cost(), array=start_status_indices)
             start_pointing_index = closest_start_status_index
             end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
             operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.CHARGING.value
@@ -751,8 +747,8 @@ class CubeSatMission:
         # After: [T T T T P  P  C C]
         
         # Get the start of the closest polar and mark its beginning as the beginning of the pointing
-        start_polar_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='start')
-        closest_start_polar_index = self.getClosestValue(value=index, array=start_polar_indices)
+        start_polar_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='start')
+        closest_start_polar_index = Helpers.get_closest_value(value=index, array=start_polar_indices)
         start_pointing_index = closest_start_polar_index
         end_pointing_index = start_pointing_index + Helpers.get_pointing_cost() + 1
         operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
@@ -790,8 +786,8 @@ class CubeSatMission:
         # After: [C C S P P nP nP]
 
         # Start pointing before the end of the SAA to take advantage of the SAA
-        end_SAA_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.SAA.value, index='after', change_type='end')
-        closest_end_SAA_index = self.getClosestValue(value=index, array=end_SAA_indices)
+        end_SAA_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.SAA.value, index='after', change_type='end')
+        closest_end_SAA_index = Helpers.get_closest_value(value=index, array=end_SAA_indices)
         if operations_schedule[closest_end_SAA_index + 1] != MissionStatus.POINTING.value:
             end_pointing_index = closest_end_SAA_index + 1
             start_pointing_index = end_pointing_index - Helpers.get_pointing_cost()
@@ -816,14 +812,14 @@ class CubeSatMission:
         
 
 
-        indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='end')
+        indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.POLAR.value, index='after', change_type='end')
 
         for _, index in enumerate(indices):
             if operations_schedule[index] == MissionStatus.CHARGING.value:
-                start_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='start')
-                end_charging_indices = self.getChangeIndices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='end')
-                closes_start_charging_index = self.getClosestValue(value=index, array=start_charging_indices)
-                closest_end_charging_index = self.getClosestValue(value=index, array=end_charging_indices)
+                start_charging_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='after', change_type='start')
+                end_charging_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.CHARGING.value, index='before', change_type='end')
+                closes_start_charging_index = Helpers.get_closest_value(value=index, array=start_charging_indices)
+                closest_end_charging_index = Helpers.get_closest_value(value=index, array=end_charging_indices)
                 start_pointing_index = closes_start_charging_index
                 end_pointing_index = closest_end_charging_index + 1
                 operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.DOWNTIME.value
@@ -900,122 +896,6 @@ class CubeSatMission:
         for operation in self.operations:
             if operation.name == name:
                 return operation
-
-    ## TODO: update docstring and look into refactor
-    def getMovesOutside(self, array, pointing_cost):
-        """
-            Get the outside pointing slots for a given array.
-
-            Args:
-                array (numpy.ndarray): The operation schedule.
-                pointing_cost (int): The number of move slots.
-
-            Returns:
-                numpy.ndarray: The move slots mask.
-
-            Description:
-                This function takes an operation schedule and a pointing cost as input. It creates a copy of the operation schedule to avoid modifying the original. It then performs binary dilation on the copied schedule to expand it by the number of move slots. The move slots mask is generated by identifying the expanded parts not in the original schedule. The function returns the pointing slots mask.
-        """
-        
-        # Create a copy of the operation schedule to avoid modifying the original
-        array_copy = array.copy()
-
-        # Perform binary dilation to expand the operation schedule by the number of pointing slots
-        expanded_schedule = binary_dilation(array_copy,
-                                            iterations = pointing_cost,
-                                            structure = np.array([True, True, True]))
-
-        # Generate the pointing slots mask by identifying the expanded parts not in the original schedule
-        pointing_moves_mask = (expanded_schedule == 1) & (array == 0)
-
-        return pointing_moves_mask
-
-
-    def findFirstTarget(self, arr, obs):
-        if not obs:
-            for value in arr:
-                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value:
-                    return value
-        elif obs:
-            for value in arr:
-                if MissionStatus.TARGET2.value == value or MissionStatus.TARGET1.value == value or MissionStatus.OBSERVING.value == value:
-                    return value
-        return None  # Return None if no such value is found
-    
-    def getClosestValue(self, value, array):
-        # Ensure the value is not None
-        if value is None:
-            raise ValueError('value must not be None')
-        
-        # Ensure the array is not empty
-        if len(array) == 0:
-            raise ValueError('The array must not be empty')
-        
-        # Calculate the absolute differences between the array elements and the target value
-        diff = abs(np.array(array) - value)
-        
-        # Find the index of the smallest difference
-        min_val_index = np.argmin(diff)
-        
-        # Return the array element at the index of the smallest difference
-        return array[min_val_index]
-
-        
-    def getChangeIndices(self, schedule, value=None, index='', change_type=''):
-        """ 
-        Finds indices in the schedule where a change occurs, based on the given parameters.
-
-        Args:
-            schedule (numpy.ndarray): The input array representing the schedule.
-            value: The value to check for changes (default is None, meaning any change).
-            index: Specifies whether to find changes 'before' or 'after' occurrences of the value 
-                (default is '', meaning no index restriction).
-            change_type: Specifies whether to find the 'start', 'end', or 'both' points of a change 
-                        (default is '', meaning any change).
-
-        Returns:
-            numpy.ndarray: An array of indices where the specified change occurs.
-
-        Raises:
-            ValueError: If invalid values are provided for 'index' or 'change_type'.
-        """
-
-        # Input validation
-        if index not in ['before', 'after']:
-            raise ValueError("index must be either 'before' or 'after'")
-        elif change_type not in ['start', 'end', 'both']:
-            raise ValueError("change_type must be either 'start', 'end', or 'both'")
-
-        if value is None:
-            # Detect any change in value
-            changes = np.diff(schedule) != 0 
-
-            # Handle 'before' and 'after' cases
-            result = np.where(changes)[0]
-
-            if index == 'after':
-                result = result + 1  # Shift indices by 1 to get the index after the change
-                # Ensure we include 0 if there's a change at the beginning
-                if changes[0]:
-                    result = np.concatenate(([0], result))
-                result = result[result < len(schedule)]  # Exclude out-of-bounds indices
-            elif index == 'before':
-                if changes[0]:
-                    result = np.concatenate(([0], result)) 
-
-            return result
-        else:
-            # Detect changes to/from the specified value
-            condition = np.array(schedule) == value
-            condition = np.concatenate(([0], condition)) if index == 'after' else np.concatenate((condition, [0]))
-
-        if change_type == 'both':
-            return np.where(np.diff(condition))[0]  # Return both start and end indices
-        elif change_type == 'start':
-            return np.where(np.diff(condition) == 1)[0]
-        elif change_type == 'end':
-            return np.where(np.diff(condition) == -1)[0]
-
 
     def _plot_operations(self, num_plots = 2):
 
