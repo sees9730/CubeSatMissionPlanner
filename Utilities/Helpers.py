@@ -15,7 +15,7 @@ class Helpers:
     def is_inside_eclipse(satellite, eclipses, time):
         
         # Get the times
-        times = satellite.times
+        times = satellite.times.utc_datetime()
 
         # Get the indices of the eclipses
         eclipse_indices = np.array([eclipse.schedule_indices for eclipse in eclipses])
@@ -63,6 +63,27 @@ class Helpers:
         df['TARGET2'] = df['TARGET1']
         df['SAA'] = df['DOWNTIME']
         df['POLAR'] = df['DOWNTIME']
+
+        # Convert the DataFrame to a dictionary and extract the first value from each list (assuming single-value columns)
+        data_dict = df.to_dict(orient='list')
+        result_dict = {k: v[0] for k, v in data_dict.items()}
+
+        return result_dict
+    
+    def get_data_dict(mission_config: 'MissionConfig') -> Dict[str, int]:
+
+        # Change the column names to more readable/code friendly names
+        ColumnMappingDataBudget = {
+            'Initial Data Size Stored [MB]': 'INITIAL_DATA_SIZE',
+            'Dangerous Data Size Stored [MB]': 'MAXIMUM_DATA_SIZE',
+            'ACCUM File Size [MB]': 'ACCUM',
+            'TTAG File Size [MB]': 'TTAG',
+            'Downlink Data Rate [MB/s]': 'DOWNLINK_RATE'
+        }
+
+        # Get the data data frame and rename the columns
+        df = mission_config.data_info
+        df.rename(columns = ColumnMappingDataBudget, inplace = True)
 
         # Convert the DataFrame to a dictionary and extract the first value from each list (assuming single-value columns)
         data_dict = df.to_dict(orient='list')

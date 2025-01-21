@@ -63,7 +63,9 @@ class CubeSatMission:
         self._create_science_mission()
         self._create_operations()
         self._create_commands_list()
-        self.getBatteryChargePlot(self.commands_list)
+        self.get_battery_charge_plot()
+        self.plot_target_completion()
+        self.get_data_storage_plot()
 
     def _create_mission_config(self, excel_file_path: str) -> None:
         """
@@ -299,6 +301,7 @@ class CubeSatMission:
         return
     
     def _create_operations(self):
+
         # Create the master operations schedule
         operations_schedule = np.zeros_like(self.satellite.times, dtype=int)
 
@@ -387,116 +390,6 @@ class CubeSatMission:
 
         self.commands_list = commands_list
     
-    def getBatteryChargePlot(self, actions_list):
-        """
-            Generates a battery charge plot based on power budget and action list.
-
-            Args:
-                file_path (str): Path to the power budget file.
-                sheet_name (str): Name of the sheet within the file containing power data.
-                actions_list (LinkedList): Linked list of Action objects representing planned actions.
-                plan (str): Name or identifier of the plan being analyzed.
-
-            Returns:
-                None (plots the battery charge profile)
-        """
-
-        # Get the power budget information
-        net_energy_dict =  Helpers.get_energy_dict(self.mission_config)
-        initial_charge = net_energy_dict['INITIAL_CHARGE']
-        max_charge = net_energy_dict['MAXIMUM_CHARGE']
-
-        # Loop through the actions
-        current_node = actions_list.head_node
-        
-        # Initialize the arrays for plotting
-        battery_charge_joules = [initial_charge]
-        battery_charge_time = [current_node.getData().getTime()]
-
-        while current_node:
-
-            # Get the data for the current node
-            action = current_node.getData()
-            action_time = action.getTime()
-            action_duration = action.getDuration()
-            action_energy = action.getEnergy()
-
-            # Update the arrays
-            print(battery_charge_joules[-1], action.getKey(), action_energy)
-            battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
-            print(battery_charge_joules[-1])
-            print()
-            battery_charge_time.append(action_time + action_duration)
-
-            # Move to the next node
-            current_node = current_node.getNextNode()
-
-        # Plot the battery charge
-        eclipse_times = []
-        for eclipse in self.science_mission.eclipses:
-            for i in range(2):
-                eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
-        self.plotBatteryCharge(battery_charge_time, battery_charge_joules, eclipse_times)
-
-    def plotBatteryCharge(self, date_time, y, eclipse_times):
-        """
-            Plots the battery charge over time with eclipse highlighting.
-
-            Args:
-                x (list): List of time values (in minutes).
-                y (list): List of corresponding onboard energy values (in Joules).
-                plan (Plan object): Plan object containing schedule and eclipse information.
-
-            Returns:
-                None (displays the plot)
-        """
-
-        # Create a smooth interpolated curve
-        x = [(time - date_time[0]).total_seconds() for time in date_time]
-        interp_line = make_interp_spline(x, y)
-        X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status) * 1)  # Denser sampling for smoothness
-        Y = interp_line(X)
-        X = [date_time[0] + datetime.timedelta(seconds = time) for time in X]
-
-        # Create the plot
-        plt.figure(figsize=(10, 6))
-        plt.title('Power Profile Through Plan')
-        plt.plot(X, Y, color='#FF5003', linewidth=4)  # Plot the energy curve
-        # plt.plot(x, y, color='#FF5003', linewidth=4)
-        
-        # Highlight eclipse periods
-        for i in range(0, len(eclipse_times), 2):
-            start_index = eclipse_times[i]
-            if i + 1 < len(eclipse_times):
-                end_index = eclipse_times[i + 1]
-                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
-        
-        # Format the plot
-        plt.ylabel('Total Energy [J]')
-        plt.xlabel('Time in UTC')
-        plt.grid(which='both', linestyle='--', linewidth=0.2)
-        plt.xticks(rotation = 45)
-        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
-        plt.gca().xaxis.set_major_formatter(x_fmt)
-        # plt.gca().yaxis.set_major_formatter(FuncFormatter(formatFunc))
-        
-    # def formatFunc(value, position = None):
-    #     """
-    #         Formats a numerical value into scientific notation with two decimal places.
-
-    #         Args:
-    #             value: The numerical value to be formatted.
-    #             position: (Optional) The position for matplotlib tick formatting (not used in this implementation).
-
-    #         Returns:
-    #             A string representing the value in scientific notation.
-    #     """
-    #     exponent = int(np.log10(value))
-    #     coefficient = value / (10 ** exponent)
-    #     return f'{coefficient:.2f}e{exponent}'
-
-
-
     def _allocate_constraints(self, operations_schedule):
         """Allocate the constraints (SAA, Polar Keepout, Charging) in the operations schedule."""
         saa_schedule = self.get_schedule_by_name("SAA Keepout Schedule").status
@@ -896,6 +789,356 @@ class CubeSatMission:
         for operation in self.operations:
             if operation.name == name:
                 return operation
+    
+
+    def get_battery_charge_plot(self):
+        """
+            Generates a battery charge plot based on power budget and action list.
+
+            Args:
+                file_path (str): Path to the power budget file.
+                sheet_name (str): Name of the sheet within the file containing power data.
+                actions_list (LinkedList): Linked list of Action objects representing planned actions.
+                plan (str): Name or identifier of the plan being analyzed.
+
+            Returns:
+                None (plots the battery charge profile)
+        """
+
+        # Get the power budget information
+        net_energy_dict =  Helpers.get_energy_dict(self.mission_config)
+        initial_charge = net_energy_dict['INITIAL_CHARGE']
+        max_charge = net_energy_dict['MAXIMUM_CHARGE']
+
+        # Loop through the actions
+        current_node = self.commands_list.head_node
+        
+        # Initialize the arrays for plotting
+        battery_charge_joules = [initial_charge]
+        battery_charge_time = [current_node.getData().getTime()]
+
+        while current_node:
+
+            # Get the data for the current node
+            action = current_node.getData()
+            action_time = action.getTime()
+            action_duration = action.getDuration()
+            action_energy = action.getEnergy()
+
+            # Update the arrays
+            # print(battery_charge_joules[-1], action.getKey(), action_energy)
+            battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
+            # print(battery_charge_joules[-1])
+            # print()
+            battery_charge_time.append(action_time + action_duration)
+
+            # Move to the next node
+            current_node = current_node.getNextNode()
+
+        # Plot the battery charge
+        eclipse_times = []
+        for eclipse in self.science_mission.eclipses:
+            for i in range(2):
+                eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+        self.plot_battery_charge(battery_charge_time, battery_charge_joules, eclipse_times)
+
+    def plot_battery_charge(self, date_time, y, eclipse_times):
+        """
+            Plots the battery charge over time with eclipse highlighting.
+
+            Args:
+                x (list): List of time values (in minutes).
+                y (list): List of corresponding onboard energy values (in Joules).
+                plan (Plan object): Plan object containing schedule and eclipse information.
+
+            Returns:
+                None (displays the plot)
+        """
+
+        # Create a smooth interpolated curve
+        x = [(time - date_time[0]).total_seconds() for time in date_time]
+        interp_line = make_interp_spline(x, y)
+        X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status) * 1)  # Denser sampling for smoothness
+        Y = interp_line(X) / 1000
+        X = [date_time[0] + datetime.timedelta(seconds = time) for time in X]
+
+        # Create the plot
+        plt.figure(figsize=(10, 6))
+        plt.title('Power Profile Through Plan', fontsize = 20)
+        plt.plot(X, Y, color='#FF5003', linewidth=4)  # Plot the energy curve
+        # plt.plot(x, y, color='#FF5003', linewidth=4)
+        
+        # Highlight eclipse periods
+        for i in range(0, len(eclipse_times), 2):
+            start_index = eclipse_times[i]
+            if i + 1 < len(eclipse_times):
+                end_index = eclipse_times[i + 1]
+                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
+        
+        # Format the plot
+        plt.ylabel('Total Energy [kJ]', fontsize = 15)
+        plt.xlabel('Time in UTC', fontsize = 15)
+        plt.grid(which='both', linestyle='--', linewidth=0.2)
+        plt.xticks(rotation = 45)
+        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+        plt.gca().xaxis.set_major_formatter(x_fmt)
+        plt.show()
+
+    def plot_target_completion(self):
+
+        current_node = self.commands_list.head_node
+        
+        target_completion = {}
+        last_eclipse_num = -1
+    
+        while current_node:
+
+            # Get the data for the current node
+            command = current_node.data
+            eclipse_num = command.eclipse_num
+        
+            if command.key in ['TARGET1', 'TARGET2'] and eclipse_num != last_eclipse_num:
+            
+                # print(command.key, command.eclipse_num)
+                eclipse_num = command.eclipse_num
+                eclipse = self.science_mission.eclipses[eclipse_num]
+            
+                if command.key == 'TARGET1':
+                    index = 0
+                elif command.key == 'TARGET2':
+                    index = 1
+            
+                # target_exposure_name = list(eclipse.targets_observed.keys())[index]
+                # target_exposure_time = list(eclipse.targets_observed.values())[index]
+                target_exposure_name = eclipse.targets_names[index]
+                target_exposure_time = eclipse.targets_exp_times[index]
+
+                try:
+                    # target_completion_array = target_completion[target_exposure_name]
+                    # target_completion_times = target_completion[target_exposure_name + '_times']
+                    target_completion[target_exposure_name].append(target_exposure_time)
+                    target_completion[target_exposure_name + '_times'].append(command.time)
+                except:
+                    target_completion[target_exposure_name] = [0, target_exposure_time]
+                    target_completion[target_exposure_name + '_times'] = [self.satellite.times.utc_datetime()[0], command.time]
+            
+                last_eclipse_num = eclipse_num
+                # target_completion_time.append(action.time)
+            
+            # action_time = action.getTime()
+            # action_duration = action.getDuration()
+            # action_energy = action.getEnergy()
+
+
+            # # Update the arrays
+            # battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
+            # battery_charge_time.append(action_time + action_duration)
+
+
+            # Move to the next node
+            current_node = current_node.getNextNode()
+        # print(target_completion)
+    
+    
+    
+    
+        # target_completion = arr
+        x = []
+        y = []
+        plt.figure(figsize=(10, 6))
+        plt.title('Target Completion Through Plan', fontsize = 20)
+        print(len(target_completion.items()))
+        print(list(target_completion.values())[0])
+        print(list(target_completion.values())[2])
+        for k, v in target_completion.items():
+            # print(f'TRY : {k}')
+            if '_times' in k:
+                x = target_completion[k]
+            else:
+                label = k
+                y = np.cumsum(target_completion[k]) / 1000
+            try:
+                # if len(y) > 1:
+                    # plt.plot(x, y, label = label, drawstyle = 'steps')
+                # else:
+                
+                # # Plot the first line and capture its color
+                line1, = plt.plot(x, y, 'o', label = f"{label} = {y[-1]}ks", linewidth=4)
+                # Use the color of line1 for the second plot
+                plt.plot(x, y, drawstyle='steps-post', linewidth=2, color=line1.get_color())
+                print(f'PLOTTED: {k}')
+                x = []
+                y = []
+            except:
+                print('FAIL: ' + k)
+                pass
+        
+        # Add the same last number in the 
+        
+        eclipse_times = []
+        for eclipse in self.science_mission.eclipses:
+            for i in range(2):
+                eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+        # Highlight eclipse periods
+        for i in range(0, len(eclipse_times), 2):
+            start_index = eclipse_times[i]
+            if i + 1 < len(eclipse_times):
+                end_index = eclipse_times[i + 1]
+                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
+
+        plt.ylabel('Kiloseconds of Exposure', fontsize = 15)
+        plt.xlabel('Time in UTC', fontsize = 15)
+        plt.xticks(rotation = 45)
+        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+        plt.gca().xaxis.set_major_formatter(x_fmt)
+        plt.grid(alpha = 0.3)
+        plt.legend()
+        # plt.xlim([plan.time_schedule[0], plan.time_schedule[20000]])
+        # plt.savefig(fname = 'Target_Completion_Zoom.png', dpi = 300)
+        # for k, v in target_completion.items():
+        #     plt.plot(target_completion_time, v, label = k)
+
+    def get_data_storage_plot(self):
+        """
+            Generates a plot of data storage over time based on target observations and downlinks.
+
+
+            Args:
+                file_path: The path to the Excel file containing data budget information.
+                sheet_name: The name of the sheet within the Excel file.
+                actions_list: A linked list of actions.
+                plan: The overall plan object.
+
+
+            Returns:
+                None (The function generates a plot but doesn't return a value).
+        """
+    
+        # Get the data budget information
+        data_budget_dict = Helpers.get_data_dict(self.mission_config)
+
+        # Loop through the actions
+        current_node = self.commands_list.head_node
+    
+        # Get the variables ready
+        initial_data_size = data_budget_dict['INITIAL_DATA_SIZE']
+        data_size = [initial_data_size]
+        data_size_time = [current_node.getData().getTime()]
+
+        # Get the eclipse objects
+        eclipses = self.science_mission.eclipses
+
+        while current_node:
+
+            # Get the key for the current node
+            action = current_node.getData()
+            action_key = action.getKey()
+
+            if action_key in ['TARGET1', 'TARGET2']:
+
+
+                # Get the new data size
+                new_data_size = self.getNewDataSize(action, data_budget_dict, eclipses)
+                new_data_size = data_size[-1] + new_data_size
+
+
+                # Update the data size
+                data_size.append(new_data_size)
+                data_size_time.append(action.getTime())
+
+
+            elif action_key == 'DOWNLINK':
+
+
+                # Get the downlink information
+                action_time = action.getTime()
+                action_duration = action.getDuration()
+
+
+                # Get the downlinked data size
+                downlinked_data_size = action_duration.total_seconds() * data_budget_dict['DOWNLINK_RATE']
+                final_data_size = data_size[-1] - downlinked_data_size
+
+
+                # Update the data size
+                data_size.append(max(final_data_size, 0))  # Ensure non-negative data size
+                data_size_time.append(action_time)
+
+
+            # Move to the next node
+            current_node = current_node.getNextNode()
+
+
+        # Plot the data
+        eclipse_times = []
+        for eclipse in self.science_mission.eclipses:
+            for i in range(2):
+                eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+        self.plot_data_storage(data_size_time, data_size, eclipse_times)
+
+    def getNewDataSize(self, action, data_budget_dict, eclipses):
+        """
+            Calculates the new data size based on the target, target exposure mode, and data budget.
+
+
+            Args:
+                plan: The overall plan object.
+                action: The current action being executed.
+                data_budget_dict: A dictionary mapping exposure modes to data sizes.
+                eclipses: A collection of eclipse objects.
+
+
+            Returns:
+                The new data size corresponding to the target exposure mode.
+        """
+
+        # Get the targets observed names and eclipse
+        eclipse = eclipses[action.getEclipseNum()]
+        # target_names = list(eclipse.getTargetsObserved().keys())
+        target_names = eclipse.targets_names
+        # Get the target index
+        target_index = {'TARGET1': 0, 'TARGET2': 1}.get(action.getKey())
+        if target_index is None:
+            raise ValueError(f"Invalid action key: {action.getKey()}")
+
+        # Get the exposure mode of the target
+        target_name = target_names[target_index]
+        # target = self.science_mission.get_target_by_name(target_name)
+        survey = self.science_mission.get_survey_of_target(target_name)
+        exposure_mode = survey.obs_mode
+
+        # Get the new data size
+        new_data_size = data_budget_dict.get(exposure_mode)
+        if new_data_size is None:
+            raise ValueError(f"Exposure mode '{exposure_mode}' not found in data budget")
+
+        return new_data_size
+
+
+    def plot_data_storage(self, x, y, eclipse_times):
+
+
+        # Plot the data
+        plt.figure(figsize=(10, 6))
+        plt.title('Onboard File Size Through Plan', fontsize = 20)
+        plt.plot(x, y, drawstyle='steps-post', color = '#FF5003', linewidth = 4)
+        plt.text(0.05, 0.95, "Total File Size = " + "{:.2f}".format(y[-1]) + " MB", transform=plt.gca().transAxes,
+            fontsize=12, verticalalignment='top')
+    
+        # Plot the eclipses
+        for i in range(0, len(eclipse_times), 2):
+            start_index = eclipse_times[i]
+            if i + 1 < len(eclipse_times):
+                end_index = eclipse_times[i + 1]
+                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
+
+
+        plt.ylabel('Total Data Size [MB]', fontsize = 15)
+        plt.xlabel('Time in UTC', fontsize = 15)
+        plt.grid(which='both', linestyle='--', linewidth=0.2)
+        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+        plt.gca().xaxis.set_major_formatter(x_fmt)
+        plt.xticks(rotation = 45)
 
     def _plot_operations(self, num_plots = 2):
 
@@ -930,7 +1173,7 @@ class CubeSatMission:
             ax[0].set_xticks([0])
 
             for status in MissionStatus:
-                ax[0].plot(times[operations_schedule_bp == status.value], operations_schedule_bp[operations_schedule_bp == status.value], marker = 's', linestyle='')
+                ax[0].plot(times[operations_schedule_bp == status.value], operations_schedule_bp[operations_schedule_bp == status.value], color = MissionStatus.plot_color(status.value), marker = 's', linestyle='')
 
             ax[0].set_ylabel("Status", fontsize = 25)
             ax[0].tick_params(labelsize=16)
@@ -951,7 +1194,7 @@ class CubeSatMission:
             ax[1].set_yticks([status.value for status in MissionStatus], labels=[status.name for status in MissionStatus])
 
             for status in MissionStatus:
-                ax[1].plot(times[operations_schedule_ap == status.value], operations_schedule_ap[operations_schedule_ap == status.value], marker = 's', linestyle='')
+                ax[1].plot(times[operations_schedule_ap == status.value], operations_schedule_ap[operations_schedule_ap == status.value], color = MissionStatus.plot_color(status.value), marker = 's', linestyle='')
 
             ax[1].set_ylabel("Status", fontsize = 25)
             ax[1].set_xlabel("Time in UTC", fontsize = 25)
@@ -1077,7 +1320,7 @@ class CubeSatMission:
         ax[0, 0].set_yticks([status.value for status in MissionStatus])
         ax[0, 0].set_yticklabels([status.name for status in MissionStatus])
         ax[0, 0].tick_params(axis='x', rotation = 25)
-        ax[0, 0].grid()
+        ax[0, 0].grid(alpha = 0.3)
         ax[0, 0].set_xlabel('Time [UTC]')
         ax[0, 0].set_ylabel('Visibility Status')
         ax[0, 0].set_title(f'Eclipse {eclipse_num} Operations Schedule')
@@ -1232,15 +1475,6 @@ class CubeSatMission:
         plt.gca().xaxis.set_major_formatter(date_format)
         plt.grid(alpha = 0.3)
         plt.show()
-
-
-
-
-
-
-        
-
-
 
     def _plot_satellite_positions(self) -> None:
         """
