@@ -45,7 +45,7 @@ class CubeSatMission:
     """
 
     def __init__(self, excel_file_path: str,
-                 debug_vars: Dict[str, bool]):
+                 program_options: Dict[str, bool]):
                 #  science_mission: 'ScienceMission',
                 #  mission_config: 'MissionConfig',
                 #  satellite: 'Satellite',
@@ -54,16 +54,20 @@ class CubeSatMission:
                 #  operations: 'Schedule'):
 
         # Initialize a new CubeSatMission object
-        self.pointing_debug = debug_vars['Pointing Debug']
+        self.target_av_check = program_options['Target Availability Check']
+        self.pointing_debug = program_options['Pointing Debug']
 
         self.schedules = []
         self._create_mission_config(excel_file_path)
+        self._print_startup_message()
         self._create_satellite()
         self._create_ground_stations()
         self._create_science_mission()
         self._create_operations()
+        # if self.target_av_check:
+            # self._display_target_availability()
         self._create_commands_list()
-        self.get_battery_charge_plot()
+        self.plot_battery_charge_plot()
         self.plot_target_completion()
         self.get_data_storage_plot()
 
@@ -84,6 +88,17 @@ class CubeSatMission:
         self.mission_config = MissionConfig(excel_file_path)
 
         return
+    
+    def _print_startup_message(self):
+        print("CubeSat Mission has started...")
+        print(f"Satellite Name: {self.mission_config.plan_info['Satellite Name'].values[0]}")
+        start_time = self.mission_config.plan_info['Simulation Start Time [YYYY-MM-DD HH:MM:SS UTC]'].values[0]
+        end_time = self.mission_config.plan_info['Simulation End Time [YYYY-MM-DD HH:MM:SS UTC]'].values[0]
+        duration = (end_time - start_time).astype('timedelta64[D]').astype(float)
+        print(f"Simulation Start UTC Time: {start_time}")
+        print(f"Simulation End UTC Time: {self.mission_config.plan_info['Simulation End Time [YYYY-MM-DD HH:MM:SS UTC]'].values[0]}")
+        print(f"Simulation Time Step: {self.mission_config.plan_info['Timestep [sec]'].values[0]} seconds")
+        print(F"Simulation Duration: {duration} days")
     
     def _create_satellite(self) -> None:
         """
@@ -142,7 +157,7 @@ class CubeSatMission:
 
         return
 
-    def _create_science_mission(self) -> None:
+    def _create_science_mission(self) -> ScienceMission:
         """
         Create a new ScienceMission object based on the data in the plan_info DataFrame.
         
@@ -151,10 +166,30 @@ class CubeSatMission:
         ScienceMission
             A new ScienceMission object with the data from the plan_info DataFrame.
         """
-
         self.science_mission = None
 
-        ## SURVEYS ##
+        # Create surveys
+        surveys = self._create_surveys()
+
+        # Create visibility schedules and targets and assign them to surveys
+        master_targets_list = self._create_targets(surveys)
+
+        # Create eclipses
+        eclipse_objects = self._create_eclipses(surveys)
+
+        self.science_mission = ScienceMission(master_targets_list, eclipse_objects, surveys)
+        return self.science_mission
+
+    def _create_surveys(self) -> List[Survey]:
+        """
+        Create a list of Survey objects based on the data in the survey_info DataFrame.
+        
+        Returns
+        -------
+        List[Survey]
+            A list of Survey objects with the data from the survey_info DataFrame.
+        """
+        # Get the survey information
         survey_info = self.mission_config.survey_info
         surveys_data = zip(survey_info['Survey'].values, survey_info['N Targets'].values,
                            survey_info['Pointings Per Target'].values, survey_info['ExpTime Per Pointing [s]'].values,
@@ -165,39 +200,46 @@ class CubeSatMission:
         # Sort surveys_data based on SurveyPriority
         sorted_surveys_data = sorted(surveys_data, key=lambda x: x[8])  # x[8] is the SurveyPriority
 
-        surveys = []
-
         # Create the survey objects
+        surveys = []
         for survey_data in sorted_surveys_data:
             survey_name, n_targets, pntngs_per_target, exp_time_per_pntng, exp_time_per_target, total_exp_time, obs_mode, repeat_targets, priority, min_exp_time = survey_data
-
-            surveys.append(Survey(survey_name, n_targets, [], pntngs_per_target, exp_time_per_pntng, min_exp_time, exp_time_per_target, total_exp_time, repeat_targets, obs_mode))
+            surveys.append(Survey(survey_name, n_targets, [], pntngs_per_target, 
+                                  exp_time_per_pntng, min_exp_time, exp_time_per_target, 
+                                  total_exp_time, repeat_targets, obs_mode))
             
-        ## TARGETS ##
+        return surveys
 
+    def _create_targets(self, surveys: List[Survey]) -> List[Target]:
+        """
+        Create a list of Target objects based on the data in the target_info DataFrame.
+        
+        Returns
+        -------
+        List[Target]
+            A list of Target objects with the data from the target_info DataFrame.
+        """
         # Calculate the visibilities that play a role in calculating target visibility
         saa_keepout_schedule = np.isin(self.satellite.latitudes, self.satellite.saa_latitudes)
-        self.schedules.append(Schedule("SAA Keepout Schedule", self.satellite.start_time,
-                                          self.satellite.end_time, self.satellite.time_step_sec,
-                                          self.satellite.times, saa_keepout_schedule,
-                                          {True: "In SAA", False: "Not in SAA"}))
-        
         polar_keepout_schedule = (
             (self.satellite.latitudes > (90 - self.satellite.polar_constraint)) |
             (self.satellite.latitudes < (-90 + self.satellite.polar_constraint))
         )
+        charging_schedule = self.satellite.earth_satellite.at(self.satellite.times).is_sunlit(self.satellite.ephemeris)
+
+        self.schedules.append(Schedule("SAA Keepout Schedule", self.satellite.start_time,
+                                          self.satellite.end_time, self.satellite.time_step_sec,
+                                          self.satellite.times, saa_keepout_schedule,
+                                          {True: "In SAA", False: "Not in SAA"}))
         self.schedules.append(Schedule("Polar Keepout Schedule", self.satellite.start_time,
                                           self.satellite.end_time, self.satellite.time_step_sec,
                                           self.satellite.times, polar_keepout_schedule,
                                           {True: "In Polar Keepout", False: "Not in Polar Keepout"}))
-
-        charging_schedule = self.satellite.earth_satellite.at(self.satellite.times).is_sunlit(self.satellite.ephemeris)
         self.schedules.append(Schedule("Charging Schedule", self.satellite.start_time,
                                           self.satellite.end_time, self.satellite.time_step_sec,
                                           self.satellite.times, charging_schedule,
                                           {True: "Charging", False: "Not Charging"}))
                                           
-
         # Calculate the targets' visibilities and create the target objects
         targets_info = self.mission_config.targets_info
         targets_data = zip(targets_info['Target'].values, targets_info['HH'].values, targets_info['MM'].values,
@@ -207,9 +249,7 @@ class CubeSatMission:
         
         # Sort targets_data based on Base Priority
         sorted_targets_data = sorted(targets_data, key=lambda x: x[8])  # x[8] is the Base Priority
-        
         master_targets_list = []
-
         survey_names = [survey.name for survey in surveys]
 
         # Calculate the times at which the moon is invisible
@@ -243,10 +283,20 @@ class CubeSatMission:
             target_survey_index = survey_names.index(target_survey)
             survey = surveys[target_survey_index]
             survey.targets.append(target_object)
+        
+        return master_targets_list
 
-        ## ECLIPSES ##
+    def _create_eclipses(self, surveys: List[Survey]) -> List[Eclipse]:
+        """
+        Create a list of Eclipse objects based on the data in the eclipse_info DataFrame.
+        
+        Returns
+        -------
+        List[Eclipse]
+            A list of Eclipse objects with the data from the eclipse_info DataFrame.
+        """
         # Create the eclipse schedules based on the charging schedule
-        overall_eclipse_schedule = ~charging_schedule
+        overall_eclipse_schedule = ~self.get_schedule_by_name("Charging Schedule").status
         
         # Get the start and end indices of contiguous ones (start and ends are inclusive)
         is_one = overall_eclipse_schedule == 1
@@ -296,10 +346,8 @@ class CubeSatMission:
 
             eclipse_objects.append(eclipse)
 
-        self.science_mission = ScienceMission(master_targets_list, eclipse_objects, surveys)
+        return eclipse_objects
 
-        return
-    
     def _create_operations(self):
 
         # Create the master operations schedule
@@ -449,6 +497,7 @@ class CubeSatMission:
             eclipse_start = eclipse.schedule_indices[0]
             eclipse_end = eclipse.schedule_indices[1]
             if pointing_debug:
+                print(f'----------- Eclipse {eclipse_num} -----------')
                 self.plot_eclipse_operations(eclipse_num)
 
             self.update_targets_priorities(eclipse, pointing_debug)
@@ -548,7 +597,7 @@ class CubeSatMission:
         if pointing_debug:
             self.plot_eclipse_operations(eclipse.eclipse_number)
 
-    # Done
+    # TODO: Description
     def _allocate_pointing_windows_for_charging(self, operations_schedule):
         """_summary_
 
@@ -674,14 +723,14 @@ class CubeSatMission:
             index (int): The index of the current operation.
         """
 
-        # Example (S = SAA, nP = not pointing, P = pointing, C = charging):
-        # Prev.: [C C S S S nP nP]
-        # After: [C C S P P nP nP]
+        # Example (S = SAA, n = not pointing or observing, P = pointing, C = charging):
+        # Prev.: [C C S S S n n]
+        # After: [C C S P P n n]
 
         # Start pointing before the end of the SAA to take advantage of the SAA
         end_SAA_indices = Helpers.get_change_indices(schedule=operations_schedule, value=MissionStatus.SAA.value, index='after', change_type='end')
         closest_end_SAA_index = Helpers.get_closest_value(value=index, array=end_SAA_indices)
-        if operations_schedule[closest_end_SAA_index + 1] != MissionStatus.POINTING.value:
+        if operations_schedule[closest_end_SAA_index + 1] not in (MissionStatus.POINTING.value, MissionStatus.OBSERVING.value):
             end_pointing_index = closest_end_SAA_index + 1
             start_pointing_index = end_pointing_index - Helpers.get_pointing_cost()
             operations_schedule[start_pointing_index: end_pointing_index] = MissionStatus.POINTING.value
@@ -790,35 +839,30 @@ class CubeSatMission:
             if operation.name == name:
                 return operation
     
-
-    def get_battery_charge_plot(self):
+    def plot_battery_charge_plot(self):
         """
-            Generates a battery charge plot based on power budget and action list.
+        Generates a battery charge plot based on power budget and action list.
 
-            Args:
-                file_path (str): Path to the power budget file.
-                sheet_name (str): Name of the sheet within the file containing power data.
-                actions_list (LinkedList): Linked list of Action objects representing planned actions.
-                plan (str): Name or identifier of the plan being analyzed.
+        Args:
+            None
 
-            Returns:
-                None (plots the battery charge profile)
+        Returns:
+            None (plots the battery charge profile)
         """
 
         # Get the power budget information
-        net_energy_dict =  Helpers.get_energy_dict(self.mission_config)
+        net_energy_dict = Helpers.get_energy_dict(self.mission_config)
         initial_charge = net_energy_dict['INITIAL_CHARGE']
         max_charge = net_energy_dict['MAXIMUM_CHARGE']
 
         # Loop through the actions
         current_node = self.commands_list.head_node
-        
+
         # Initialize the arrays for plotting
         battery_charge_joules = [initial_charge]
         battery_charge_time = [current_node.getData().getTime()]
 
         while current_node:
-
             # Get the data for the current node
             action = current_node.getData()
             action_time = action.getTime()
@@ -826,68 +870,45 @@ class CubeSatMission:
             action_energy = action.getEnergy()
 
             # Update the arrays
-            # print(battery_charge_joules[-1], action.getKey(), action_energy)
             battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
-            # print(battery_charge_joules[-1])
-            # print()
             battery_charge_time.append(action_time + action_duration)
 
             # Move to the next node
             current_node = current_node.getNextNode()
 
-        # Plot the battery charge
+        # Prepare eclipse times
         eclipse_times = []
         for eclipse in self.science_mission.eclipses:
             for i in range(2):
                 eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
-        self.plot_battery_charge(battery_charge_time, battery_charge_joules, eclipse_times)
-
-    def plot_battery_charge(self, date_time, y, eclipse_times):
-        """
-            Plots the battery charge over time with eclipse highlighting.
-
-            Args:
-                x (list): List of time values (in minutes).
-                y (list): List of corresponding onboard energy values (in Joules).
-                plan (Plan object): Plan object containing schedule and eclipse information.
-
-            Returns:
-                None (displays the plot)
-        """
 
         # Create a smooth interpolated curve
-        x = [(time - date_time[0]).total_seconds() for time in date_time]
-        interp_line = make_interp_spline(x, y)
-        X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status) * 1)  # Denser sampling for smoothness
+        x = [(time - battery_charge_time[0]).total_seconds() for time in battery_charge_time]
+        interp_line = make_interp_spline(x, battery_charge_joules)
+        X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status))
         Y = interp_line(X) / 1000
-        X = [date_time[0] + datetime.timedelta(seconds = time) for time in X]
+        X = [battery_charge_time[0] + datetime.timedelta(seconds=time) for time in X]
 
         # Create the plot
         plt.figure(figsize=(10, 6))
-        plt.title('Power Profile Through Plan', fontsize = 20)
-        plt.plot(X, Y, color='#FF5003', linewidth=4)  # Plot the energy curve
-        # plt.plot(x, y, color='#FF5003', linewidth=4)
-        
+        plt.title('Power Profile Through Plan', fontsize=20)
+        plt.plot(X, Y, color='#FF5003', linewidth=4)
+
         # Highlight eclipse periods
-        for i in range(0, len(eclipse_times), 2):
-            start_index = eclipse_times[i]
-            if i + 1 < len(eclipse_times):
-                end_index = eclipse_times[i + 1]
-                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
-        
+        for start, end in zip(eclipse_times[::2], eclipse_times[1::2]):
+            plt.axvspan(start, end, color='lightsteelblue', alpha=0.3)
+
         # Format the plot
-        plt.ylabel('Total Energy [kJ]', fontsize = 15)
-        plt.xlabel('Time in UTC', fontsize = 15)
+        plt.ylabel('Total Energy [kJ]', fontsize=15)
+        plt.xlabel('Time in UTC', fontsize=15)
         plt.grid(which='both', linestyle='--', linewidth=0.2)
-        plt.xticks(rotation = 45)
-        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
-        plt.gca().xaxis.set_major_formatter(x_fmt)
+        plt.xticks(rotation=45)
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
         plt.show()
 
     def plot_target_completion(self):
 
         current_node = self.commands_list.head_node
-        
         target_completion = {}
         last_eclipse_num = -1
     
@@ -897,25 +918,25 @@ class CubeSatMission:
             command = current_node.data
             eclipse_num = command.eclipse_num
         
+            # If the command is a target exposure
             if command.key in ['TARGET1', 'TARGET2'] and eclipse_num != last_eclipse_num:
             
                 # print(command.key, command.eclipse_num)
                 eclipse_num = command.eclipse_num
                 eclipse = self.science_mission.eclipses[eclipse_num]
-            
+
+                # Get the index of the target
                 if command.key == 'TARGET1':
                     index = 0
                 elif command.key == 'TARGET2':
                     index = 1
             
-                # target_exposure_name = list(eclipse.targets_observed.keys())[index]
-                # target_exposure_time = list(eclipse.targets_observed.values())[index]
+                # Get the target name and exposure
                 target_exposure_name = eclipse.targets_names[index]
                 target_exposure_time = eclipse.targets_exp_times[index]
 
+                # Update/Create the target completion dictionary
                 try:
-                    # target_completion_array = target_completion[target_exposure_name]
-                    # target_completion_times = target_completion[target_exposure_name + '_times']
                     target_completion[target_exposure_name].append(target_exposure_time)
                     target_completion[target_exposure_name + '_times'].append(command.time)
                 except:
@@ -923,33 +944,16 @@ class CubeSatMission:
                     target_completion[target_exposure_name + '_times'] = [self.satellite.times.utc_datetime()[0], command.time]
             
                 last_eclipse_num = eclipse_num
-                # target_completion_time.append(action.time)
-            
-            # action_time = action.getTime()
-            # action_duration = action.getDuration()
-            # action_energy = action.getEnergy()
-
-
-            # # Update the arrays
-            # battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
-            # battery_charge_time.append(action_time + action_duration)
-
 
             # Move to the next node
             current_node = current_node.getNextNode()
-        # print(target_completion)
-    
-    
-    
-    
-        # target_completion = arr
+
+        # Plot the target completion
         x = []
         y = []
         plt.figure(figsize=(10, 6))
         plt.title('Target Completion Through Plan', fontsize = 20)
-        print(len(target_completion.items()))
-        print(list(target_completion.values())[0])
-        print(list(target_completion.values())[2])
+
         for k, v in target_completion.items():
             # print(f'TRY : {k}')
             if '_times' in k:
@@ -958,27 +962,24 @@ class CubeSatMission:
                 label = k
                 y = np.cumsum(target_completion[k]) / 1000
             try:
-                # if len(y) > 1:
-                    # plt.plot(x, y, label = label, drawstyle = 'steps')
-                # else:
-                
-                # # Plot the first line and capture its color
+                # Plot the target
                 line1, = plt.plot(x, y, 'o', label = f"{label} = {y[-1]}ks", linewidth=4)
-                # Use the color of line1 for the second plot
                 plt.plot(x, y, drawstyle='steps-post', linewidth=2, color=line1.get_color())
-                print(f'PLOTTED: {k}')
+                # print(f'PLOTTED: {k}')
+
+                # Reset x and y for the next target
                 x = []
                 y = []
             except:
-                print('FAIL: ' + k)
+                # print('FAIL: ' + k)
                 pass
         
-        # Add the same last number in the 
-        
+        # Get the eclipse times
         eclipse_times = []
         for eclipse in self.science_mission.eclipses:
             for i in range(2):
                 eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+
         # Highlight eclipse periods
         for i in range(0, len(eclipse_times), 2):
             start_index = eclipse_times[i]
@@ -989,14 +990,76 @@ class CubeSatMission:
         plt.ylabel('Kiloseconds of Exposure', fontsize = 15)
         plt.xlabel('Time in UTC', fontsize = 15)
         plt.xticks(rotation = 45)
-        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
-        plt.gca().xaxis.set_major_formatter(x_fmt)
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
         plt.grid(alpha = 0.3)
         plt.legend()
-        # plt.xlim([plan.time_schedule[0], plan.time_schedule[20000]])
-        # plt.savefig(fname = 'Target_Completion_Zoom.png', dpi = 300)
-        # for k, v in target_completion.items():
-        #     plt.plot(target_completion_time, v, label = k)
+    # def plot_target_completion(self):
+    #     """
+    #     Plots the target completion over time with eclipse highlighting.
+
+    #     Args:
+    #         None
+
+    #     Returns:
+    #         None (displays the plot)
+    #     """
+    #     current_node = self.commands_list.head_node
+    #     target_completion = {}
+    #     last_eclipse_num = -1
+
+    #     # Loop through the commands list
+    #     while current_node:
+    #         command = current_node.data
+    #         eclipse_num = command.eclipse_num
+
+    #         # Check if the command is for TARGET1 or TARGET2 and if it's a new eclipse
+    #         if command.key in ['TARGET1', 'TARGET2'] and eclipse_num != last_eclipse_num:
+    #             eclipse = self.science_mission.eclipses[eclipse_num]
+    #             index = 0 if command.key == 'TARGET1' else 1
+    #             target_exposure_name = eclipse.targets_names[index]
+    #             target_exposure_time = eclipse.targets_exp_times[index]
+
+    #             # Update the target completion dictionary
+    #             if target_exposure_name in target_completion:
+    #                 target_completion[target_exposure_name].append(target_exposure_time)
+    #                 target_completion[target_exposure_name + '_times'].append(command.time)
+    #             else:
+    #                 target_completion[target_exposure_name] = [0, target_exposure_time]
+    #                 target_completion[target_exposure_name + '_times'] = [self.satellite.times.utc_datetime()[0], command.time]
+
+    #             last_eclipse_num = eclipse_num
+
+    #         current_node = current_node.getNextNode()
+
+    #     # Create the plot
+    #     plt.figure(figsize=(10, 6))
+    #     plt.title('Target Completion Through Plan', fontsize=20)
+
+    #     # Plot the target completion data
+    #     for k, v in target_completion.items():
+    #         if '_times' in k:
+    #             x = v
+    #         else:
+    #             label = k
+    #             y = np.cumsum(v) / 1000
+    #             line1, = plt.plot(x, y, 'o', label=f"{label} = {y[-1]}ks", linewidth=4)
+    #             plt.plot(x, y, drawstyle='steps-post', linewidth=2, color=line1.get_color())
+
+    #     # Prepare eclipse times
+    #     eclipse_times = [self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]] for eclipse in self.science_mission.eclipses for i in range(2)]
+
+    #     # Highlight eclipse periods
+    #     for start, end in zip(eclipse_times[::2], eclipse_times[1::2]):
+    #         plt.axvspan(start, end, color='lightsteelblue', alpha=0.3)
+
+    #     # Format the plot
+    #     plt.ylabel('Kiloseconds of Exposure', fontsize=15)
+    #     plt.xlabel('Time in UTC', fontsize=15)
+    #     plt.xticks(rotation=45)
+    #     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+    #     plt.grid(alpha=0.3)
+    #     plt.legend()
+    #     plt.show()
 
     def get_data_storage_plot(self):
         """
@@ -1036,19 +1099,15 @@ class CubeSatMission:
 
             if action_key in ['TARGET1', 'TARGET2']:
 
-
                 # Get the new data size
                 new_data_size = self.getNewDataSize(action, data_budget_dict, eclipses)
                 new_data_size = data_size[-1] + new_data_size
-
 
                 # Update the data size
                 data_size.append(new_data_size)
                 data_size_time.append(action.getTime())
 
-
             elif action_key == 'DOWNLINK':
-
 
                 # Get the downlink information
                 action_time = action.getTime()
@@ -1064,10 +1123,8 @@ class CubeSatMission:
                 data_size.append(max(final_data_size, 0))  # Ensure non-negative data size
                 data_size_time.append(action_time)
 
-
             # Move to the next node
             current_node = current_node.getNextNode()
-
 
         # Plot the data
         eclipse_times = []

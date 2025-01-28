@@ -26,14 +26,15 @@ import logging
 # console_handler = logging.StreamHandler()
 
 # Flags for outputting debugging plots/prints
-debug_vars = {}
-debug_vars['Pointing Debug'] = False
+program_options = {}
+program_options['Target Availability Check'] = True
+program_options['Pointing Debug'] = False
 
 # Load the Excel file
 excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
 
 # Create the MissionConfig object
-cubesat_mission = CubeSatMission(excel_file_path, debug_vars)
+cubesat_mission = CubeSatMission(excel_file_path, program_options)
 cubesat_mission._plot_satellite_positions()
 cubesat_mission._plot_operations()
 cubesat_mission.plot_eclipse_summary(14)
