@@ -35,15 +35,15 @@ Installation
 Requirements
 -----------
 
-Python 3.8+
-Required packages:
-  * numpy
-  * matplotlib
-  * pandas
-  * skyfield
-  * cartopy
-  * seaborn
-  * scipy
+* Python 3.8+
+* Required packages:
+    * numpy
+    * matplotlib
+    * pandas
+    * skyfield
+    * cartopy
+    * seaborn
+    * scipy
 
 Setup
 -----
