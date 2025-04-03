@@ -2,7 +2,7 @@
 CubeSat Mission Planner
 ================================
 
-A comprehensive mission planning and scheduling system for CubeSat operations,
+A comprehensive mission planning and scheduling system for astronomical space telescope CubeSat operations in Low Earh Orbit (LEO),
 optimizing target observations during eclipse periods while accounting for
 various operational constraints.
 
@@ -13,18 +13,19 @@ various operational constraints.
 Overview
 ========
 
-The CubeSat Mission Planner is a sophisticated scheduling system designed to optimize
-satellite operations, particularly focusing on scientific observations during eclipse periods.
+The CubeSat Mission Planner is a scheduling system designed to optimize 
+satellite operations, particularly focusing on scientific observations during eclipse periods (when the satellite is occulted from the Sun, by Earth).
 It manages complex constraints including South Atlantic Anomaly (SAA) avoidance, polar region
-keepouts, ground station communications, and power management.
+keepouts, ground station communications, earth and moon angle keepouts, and target availability. 
 
 Key Features
 -----------
 
-* Automatic scheduling of observations during eclipse periods
+* Fully automatic scheduling of observations during eclipse periods
+* Optimal target selection and slewing operations based on constraints
 * Target prioritization based on visibility and science requirements
 * Management of pointing operations with slew time costs
-* Power budget tracking and optimization
+* Power and data budget tracking
 * Downlink scheduling with ground stations
 * Visualization tools for mission analysis
 
@@ -49,12 +50,14 @@ Setup
 
 .. code-block:: bash
 
-   # Clone the repository
-   git clone https://github.com/username/cubesat-mission-planner.git
-   cd cubesat-mission-planner
+    TBD
+
+..    # Clone the repository
+..    git clone https://github.com/username/cubesat-mission-planner.git
+..    cd cubesat-mission-planner
    
-   # Install dependencies
-   pip install -r requirements.txt
+..    # Install dependencies
+..    pip install -r requirements.txt
 
 Usage
 =====
@@ -161,46 +164,6 @@ The system generates a JSON command file with the operations schedule:
    mission._create_commands_list()
    
    # File is saved as: mission_commands_YYYYMMDDTHHMMSS.json
-
-Advanced Usage
-=============
-
-Customizing Target Priorities
----------------------------
-
-Target priorities can be adjusted in the configuration file or programmatically:
-
-.. code-block:: python
-
-   # Modify target priorities
-   for target in mission.science_mission.master_target_list:
-       if "high_priority" in target.name:
-           target.base_priority = 10
-
-Handling Operational Constraints
-------------------------------
-
-Additional constraints can be implemented by modifying the allocation functions:
-
-.. code-block:: python
-
-   # Customize constraint handling
-   mission._allocate_constraints(operations_schedule)
-   
-   # Add custom constraint
-   custom_constraint = calculate_custom_constraint()
-   operations_schedule[custom_constraint] = MissionStatus.DOWNTIME.value
-
-Contributing
-===========
-
-Contributions to the CubeSat Mission Planner are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch
-3. Implement your changes
-4. Add tests if applicable
-5. Submit a pull request
 
 License
 =======
