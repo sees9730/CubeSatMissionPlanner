@@ -35,8 +35,8 @@ Installation
 Requirements
 -----------
 
-* Python 3.8+
-* Required packages:
+Python 3.8+
+Required packages:
   * numpy
   * matplotlib
   * pandas
