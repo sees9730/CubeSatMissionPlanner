@@ -97,29 +97,29 @@ Target Treatment in the Algorithm
 The CubeSat Mission Planner processes targets in the following way:
 
 1. **Visibility Calculation**:
-   * For each target, the planner calculates visibility periods throughout the mission
-   * Visibility is determined by checking all constraints at each time step
+    - For each target, the planner calculates visibility periods throughout the mission
+    - Visibility is determined by checking all constraints at each time step
 
-2. **Eclipse Association**:
-   * Visibility periods are compared with eclipse periods
-   * The planner identifies which targets are visible during each eclipse
+1. **Eclipse Association**:
+    - Visibility periods are compared with eclipse periods
+    - The planner identifies which targets are visible during each eclipse
 
-3. **Priority Adjustment**:
-   * The base priority of each target is adjusted based on:
-     * Current visibility duration
-     * Previous observation time (for repeated targets)
-     * Survey priority
-     * Special scientific considerations
+2. **Priority Adjustment**:
+    - The base priority of each target is adjusted based on:
+        - Current visibility duration
+        -  Previous observation time (for repeated targets)
+        -  Survey priority
+        -  Special scientific considerations
 
-4. **Target Selection and Scheduling**:
-   * The planner selects the highest priority target(s) for each eclipse
-   * Allocates pointing operations before observation
-   * Schedules target observations during optimal visibility periods
-   * Ensures minimum exposure time requirements are met
+1. **Target Selection and Scheduling**:
+    - The planner selects the highest priority target(s) for each eclipse
+    - Allocates pointing operations before observation
+    - Schedules target observations during optimal visibility periods
+    - Ensures minimum exposure time requirements are met
 
-5. **Command Generation**:
-   * Converts scheduled observations into spacecraft commands
-   * Specifies target coordinates, instrument settings, and timing
+1. **Command Generation**:
+    - Converts scheduled observations into spacecraft commands
+    - Specifies target coordinates, instrument settings, and timing
 
 Target Observation Modes
 =====================
