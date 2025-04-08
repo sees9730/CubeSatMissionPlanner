@@ -31,26 +31,26 @@ Targets are specified in the :ref:`targets_info_section` of the input Excel file
 Key Concepts in Target Specification:
 -----------------------------------
 
-* **Target Name and Pointing ID**: Each target has a name (identifier) and a pointing ID.
-  - For targets requiring observation from multiple angles, the same target name can have multiple entries with different pointing IDs.
-  - For targets with a single observation angle, a single pointing ID (e.g., "1" or "A") is used.
+* **Target Name and Pointing ID**: Each target has a name (identifier) and a pointing ID 
+    - For targets requiring observation from multiple angles, the same target name can have multiple entries with different pointing IDs.
+    - For targets with a single observation angle, a single pointing ID (e.g., "1" or "A") is used.
 
 * **Celestial Coordinates**: Specified in the equatorial coordinate system:
-  - **Right Ascension**: Given in hours (HH), minutes (MM), and seconds (SS)
-  - **Declination**: Given in degrees (dd), minutes (mm), and seconds (ss)
-  - These coordinates precisely define the target's position in the sky. More accurate coordinates lead to better observation planning.
+    - **Right Ascension**: Given in hours (HH), minutes (MM), and seconds (SS)
+    - **Declination**: Given in degrees (dd), minutes (mm), and seconds (ss)
+    - These coordinates precisely define the target's position in the sky. More accurate coordinates lead to better observation planning.
 
 * **Rotation Angle**: Defines the orientation of the instrument relative to the target.
-  - Important for spectrographic observations or specific instrument alignments.
-  - Measured in degrees (0-360°).
+    - Important for spectrographic observations or specific instrument alignments.
+    - Measured in degrees (0-360°).
 
 * **Base Priority**: A numerical value determining the target's importance.
-  - **Lower values indicate higher priority for scheduling.**
-  - Used in the scheduling algorithm to resolve conflicts when multiple targets are visible.
+    - **Lower values indicate higher priority for scheduling.**
+    - Used in the scheduling algorithm to resolve conflicts when multiple targets are visible.
 
 * **Survey Association**: Each target must belong to a survey.
-  - Links the target to specific observation parameters defined in the :ref:`survey_info_section`.
-  - Determines exposure time, observation mode, and other parameters.
+    - Links the target to specific observation parameters defined in the :ref:`survey_info_section`.
+    - Determines exposure time, observation mode, and other parameters.
 
 Example Target Entry:
 ------------------
