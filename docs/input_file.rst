@@ -24,7 +24,7 @@ The input Excel file must contain the following worksheets:
 
 Each worksheet requires specific columns as detailed below.
 
-.. _target_info_worksheet:
+.. _targets_info_section:
 
 Targets_Info Worksheet
 ===============

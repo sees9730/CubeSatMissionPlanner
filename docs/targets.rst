@@ -26,7 +26,7 @@ Each target represents a specific celestial object (such as a star, galaxy, or o
 Target Specification in the Input File
 ====================================
 
-Targets are specified in the :ref:`_target_info_worksheet` of the input Excel file. Each row represents a unique target or a specific pointing for a multi-pointing target.
+Targets are specified in the :ref:`_targets_info_section` of the input Excel file. Each row represents a unique target or a specific pointing for a multi-pointing target.
 
 Key Concepts in Target Specification:
 -----------------------------------
