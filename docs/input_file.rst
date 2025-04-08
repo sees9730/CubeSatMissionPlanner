@@ -29,7 +29,7 @@ Each worksheet requires specific columns as detailed below.
 Targets_Info Worksheet
 ===============
 
-Defines scientific targets for observation. For more information, see the :doc:`targets`.
+Defines scientific targets for observation. For more information, see the :doc:`targets` page.
 
 Required Columns:
 ----------------
@@ -57,6 +57,8 @@ Example:
    "HZ_43", "1", "13", "16", "21.8", "29", "5", "55", "0", "1", "CVZ_Survey"
    "WD1327", "1", "13", "29", "16.7", "23", "23", "34", "0", "2", "Bright_WD_Survey"
    "G191B2B", "1", "5", "5", "30.6", "52", "49", "51.9", "45", "3", "Bright_WD_Survey"
+
+.. _survey_info_section:
 
 Survey Worksheet
 ==============

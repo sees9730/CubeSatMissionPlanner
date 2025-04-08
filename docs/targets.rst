@@ -32,25 +32,25 @@ Key Concepts in Target Specification:
 -----------------------------------
 
 * **Target Name and Pointing ID**: Each target has a name (identifier) and a pointing ID.
-  * For targets requiring observation from multiple angles, the same target name can have multiple entries with different pointing IDs.
-  * For targets with a single observation angle, a single pointing ID (e.g., "1" or "A") is used.
+  - For targets requiring observation from multiple angles, the same target name can have multiple entries with different pointing IDs.
+  - For targets with a single observation angle, a single pointing ID (e.g., "1" or "A") is used.
 
 * **Celestial Coordinates**: Specified in the equatorial coordinate system:
-  * **Right Ascension**: Given in hours (HH), minutes (MM), and seconds (SS)
-  * **Declination**: Given in degrees (dd), minutes (mm), and seconds (ss)
-  * These coordinates precisely define the target's position in the sky
+  - **Right Ascension**: Given in hours (HH), minutes (MM), and seconds (SS)
+  - **Declination**: Given in degrees (dd), minutes (mm), and seconds (ss)
+  - These coordinates precisely define the target's position in the sky. More accurate coordinates lead to better observation planning
 
 * **Rotation Angle**: Defines the orientation of the instrument relative to the target
-  * Important for spectrographic observations or specific instrument alignments
-  * Measured in degrees (0-360°)
+  - Important for spectrographic observations or specific instrument alignments
+  - Measured in degrees (0-360°)
 
 * **Base Priority**: A numerical value determining the target's importance
-  * Higher values indicate higher priority for scheduling
-  * Used in the scheduling algorithm to resolve conflicts when multiple targets are visible
+  - **Lower values indicate higher priority for scheduling**
+  - Used in the scheduling algorithm to resolve conflicts when multiple targets are visible
 
 * **Survey Association**: Each target must belong to a survey
-  * Links the target to specific observation parameters defined in the Survey worksheet
-  * Determines exposure time, observation mode, and other parameters
+  - Links the target to specific observation parameters defined in the :ref:`survey_info_section`
+  - Determines exposure time, observation mode, and other parameters
 
 Example Target Entry:
 ------------------
@@ -65,7 +65,7 @@ This example defines a target named "HZ_43" (which is a white dwarf star) with r
 Multi-Pointing Targets
 --------------------
 
-Some scientific objectives require observing the same target from multiple angles or with different instrument configurations. In this case, the same target name will have multiple entries with different pointing IDs:
+Some scientific objectives require observing the same target from multiple angles or at slightly different celestial coordinates. In this case, the same target name will have multiple entries with different pointing IDs:
 
 .. csv-table::
    :header: "Target", "Pointing", "HH", "MM", "SS", "dd", "mm", "ss", "Rotation Angle", "Base Priority", "Survey"
@@ -88,6 +88,8 @@ For a target to be observable, it must meet several visibility constraints at a 
 5. **Eclipse Condition**: Observations typically occur during eclipse periods when the satellite is in Earth's shadow
 
 The mission planner calculates visibility windows for each target throughout the mission duration, considering all these constraints.
+
+For more information on the constraints, see the :ref:`constraints_info_section`.
 
 Target Treatment in the Algorithm
 ==============================
