@@ -107,19 +107,17 @@ The CubeSat Mission Planner processes targets in the following way:
 2. **Priority Adjustment**:
     - The base priority of each target is adjusted based on:
         - Current visibility duration
-        -  Previous observation time (for repeated targets)
-        -  Survey priority
-        -  Special scientific considerations
+        - Previous observation time (for repeated targets)
+        - Survey priority
 
-1. **Target Selection and Scheduling**:
+3. **Target Selection and Scheduling**:
     - The planner selects the highest priority target(s) for each eclipse
-    - Allocates pointing operations before observation
     - Schedules target observations during optimal visibility periods
-    - Ensures minimum exposure time requirements are met
+    - Allocates pointing operations depending on observation
+    - Ensures exposure time requirements are met
 
-1. **Command Generation**:
+4. **Command Generation**:
     - Converts scheduled observations into spacecraft commands
-    - Specifies target coordinates, instrument settings, and timing
 
 Target Observation Modes
 =====================

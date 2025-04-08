@@ -170,7 +170,7 @@ The system generates a JSON command file with the operations schedule:
    :caption: Additional Documentation
 
    input_file
-   target
+   targets
 
 License
 =======
