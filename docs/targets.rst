@@ -38,19 +38,19 @@ Key Concepts in Target Specification:
 * **Celestial Coordinates**: Specified in the equatorial coordinate system:
   - **Right Ascension**: Given in hours (HH), minutes (MM), and seconds (SS)
   - **Declination**: Given in degrees (dd), minutes (mm), and seconds (ss)
-  - These coordinates precisely define the target's position in the sky. More accurate coordinates lead to better observation planning
+  - These coordinates precisely define the target's position in the sky. More accurate coordinates lead to better observation planning.
 
-* **Rotation Angle**: Defines the orientation of the instrument relative to the target
-  - Important for spectrographic observations or specific instrument alignments
-  - Measured in degrees (0-360°)
+* **Rotation Angle**: Defines the orientation of the instrument relative to the target.
+  - Important for spectrographic observations or specific instrument alignments.
+  - Measured in degrees (0-360°).
 
-* **Base Priority**: A numerical value determining the target's importance
-  - **Lower values indicate higher priority for scheduling**
-  - Used in the scheduling algorithm to resolve conflicts when multiple targets are visible
+* **Base Priority**: A numerical value determining the target's importance.
+  - **Lower values indicate higher priority for scheduling.**
+  - Used in the scheduling algorithm to resolve conflicts when multiple targets are visible.
 
-* **Survey Association**: Each target must belong to a survey
-  - Links the target to specific observation parameters defined in the :ref:`survey_info_section`
-  - Determines exposure time, observation mode, and other parameters
+* **Survey Association**: Each target must belong to a survey.
+  - Links the target to specific observation parameters defined in the :ref:`survey_info_section`.
+  - Determines exposure time, observation mode, and other parameters.
 
 Example Target Entry:
 ------------------
