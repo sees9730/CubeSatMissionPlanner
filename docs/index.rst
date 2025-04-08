@@ -165,6 +165,12 @@ The system generates a JSON command file with the operations schedule:
    
    # File is saved as: mission_commands_YYYYMMDDTHHMMSS.json
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Additional Documentation
+
+   input_file
+
 License
 =======
 
