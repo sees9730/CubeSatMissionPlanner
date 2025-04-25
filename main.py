@@ -16,6 +16,7 @@ import logging
 
 # def main():
 
+
 # # Set up log file
 # logging.basicConfig(
 #     filename='app.log',
@@ -28,19 +29,29 @@ import logging
 # Flags for outputting debugging plots/prints
 program_options = {}
 program_options['Target Availability Check'] = True
+program_options['Survey Availability Check'] = False
+# program_options['Pointing Debug'] = True
 program_options['Pointing Debug'] = False
 
 # Load the Excel file
-excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_EARLY_SCIENCE.xlsx'
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGET_WAVE.xlsx'
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_2.xlsx'
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_1.xlsx'
+
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_2_VIS.xlsx'
+# excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_1_VIS.xlsx'
+# excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
+excel_file_path = 'Data Files/MANTIS_Mission_Config_v2.xlsx'
 
 # Create the MissionConfig object
 cubesat_mission = CubeSatMission(excel_file_path, program_options)
-cubesat_mission._plot_satellite_positions()
-cubesat_mission._plot_operations()
-cubesat_mission.plot_eclipse_summary(14)
+cubesat_mission.plot_satellite_positions()
+cubesat_mission._plot_operations(1)
+# cubesat_mission.plot_eclipse_summary(14)
+# cubesat_mission.plot_target_visibility_heatmap("TW Hya_A")
 
-
-# import plotly.graph_objects as go
+# import plotly.graph_objects as gox
 
 # fig = go.Figure(go.Scattergeo())
 # fig.update_geos(projection_type="orthographic")

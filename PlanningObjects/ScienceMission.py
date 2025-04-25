@@ -4,6 +4,7 @@ from PlanningObjects.Eclipse import Eclipse
 from PlanningObjects.Survey import Survey
 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 
 class ScienceMission:
@@ -169,15 +170,26 @@ class ScienceMission:
 
         # Plot the available targets in the entire mission
         plotted = False
+        target_names = []
+        target_available_times = []
         for survey in self.surveys:
             for target in survey.targets:
                 if np.sum(target.schedule.status) != 0:
+                    if plotted == False:
+                        fig, ax = plt.subplots()
                     plt.step(target.schedule.time.utc_datetime(), target.schedule.status, label = target.name)
+                    target_names.append(target.name)
+                    # target_available_times.append(target.schedule.time.utc_datetime())
                     plotted = True
         if plotted:
+            print('----Targets Available Throughout Mission----')
+            for target_name in target_names:
+                print(f'{target_name}')
+            print('--------')
             plt.legend(loc = 'best')
-            plt.xlim(self.eclipses[0].operations.time.utc_datetime()[0], self.eclipses[0].operations.time.utc_datetime()[-1])
+            # plt.xlim(self.eclipses[0].operations.time.utc_datetime()[0], self.eclipses[0].operations.time.utc_datetime()[-1])
             plt.xticks(rotation = 15)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d, %H:%M'))
             plt.xlabel('Time [UTC]')
             plt.ylabel('Visibility Status')
             plt.title('Available Targets in the Mission')

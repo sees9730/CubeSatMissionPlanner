@@ -6,7 +6,7 @@ class MissionStatus(Enum):
     DOWNTIME = 0
     CHARGING = 1
     OBSERVING = 2
-    POINTING = 3
+    SLEWING = 3
     DOWNLINK = 4
     SAA = 5
     POLAR = 6
@@ -18,7 +18,7 @@ class MissionStatus(Enum):
         for member in MissionStatus:
             if member.value == value:
                 return member.name
-        raise ValueError(f"Value '{value}' not found in Enum.")
+        raise "NA"
     
     def get_value(key: str) -> None:
         """
@@ -43,9 +43,10 @@ class MissionStatus(Enum):
         color_mapping = {
             MissionStatus.TARGET2.value: 'darkgoldenrod',
             MissionStatus.TARGET1.value: 'firebrick',
-            MissionStatus.DOWNTIME.value: 'red',
+            MissionStatus.DOWNTIME.value: 'black',
             MissionStatus.CHARGING.value: 'mediumseagreen',
-            MissionStatus.POINTING.value: 'steelblue',
+            MissionStatus.OBSERVING.value: 'darkgrey',
+            MissionStatus.SLEWING.value: 'teal',
             MissionStatus.DOWNLINK.value: 'tab:orange',
             MissionStatus.SAA.value: 'khaki',
             MissionStatus.POLAR.value: 'khaki'

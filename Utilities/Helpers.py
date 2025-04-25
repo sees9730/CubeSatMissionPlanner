@@ -77,7 +77,7 @@ class Helpers:
             'Initial Data Size Stored [MB]': 'INITIAL_DATA_SIZE',
             'Dangerous Data Size Stored [MB]': 'MAXIMUM_DATA_SIZE',
             'ACCUM File Size [MB]': 'ACCUM',
-            'TTAG File Size [MB]': 'TTAG',
+            'TTAG File Size [MB/s]': 'TTAG',
             'Downlink Data Rate [MB/s]': 'DOWNLINK_RATE'
         }
 

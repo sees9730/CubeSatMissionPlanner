@@ -149,10 +149,10 @@ class ActionChunk:
             json (Any): The json attribute of the instance.
     '''
 
-    def __init__(self, action_id, time, duration, energy, key, text = None, json = None, in_eclipse = None, eclipse_num = None):
+    def __init__(self, action_id, time, duration_min, energy, key, text = None, json = None, in_eclipse = None, eclipse_num = None, exposure_type = None):
         self.action_id = action_id
         self.time = time
-        self.duration = duration
+        self.duration_min = duration_min
         self.energy = energy
         self.key = key
         self.text = text
@@ -162,11 +162,12 @@ class ActionChunk:
             eclipse_num = None
         self.in_eclipse = in_eclipse
         self.eclipse_num = eclipse_num
+        self.exposure_type = exposure_type
 
     def printData(self):
         print(f'ID = {self.action_id}',
               f'Time = {self.time}',
-              f'Duration = {self.duration}',
+              f'Duration [min]= {self.duration_min}',
               f'Energy = {self.energy}',
               f'ActionChunk = {self.key}',
               f'Text = {self.text}',
@@ -194,10 +195,10 @@ class ActionChunk:
         return self.time
 
     def getDuration(self):
-        return self.duration
+        return self.duration_min
 
     def setDuration(self, duration):
-        self.duration = duration
+        self.duration_min = duration
 
     def getEnergy(self):
         return self.energy

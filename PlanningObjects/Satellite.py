@@ -89,6 +89,7 @@ class Satellite:
         self.ephemeris = load('de421.bsp')
         self.earth_ephemeris = self.ephemeris['earth']
         self.moon_ephemeris = self.ephemeris['moon']
+        self.sun_ephemeris = self.ephemeris['sun']
 
         # Calculate the satellite's position over the specified time interval
         self.earth_satellite = self._create_earth_satellite()
@@ -177,6 +178,25 @@ class Satellite:
 
         # Compute the satellite's geocentric positions at the specified times
         geocentric = self.earth_satellite.at(times)
+
+        # Check if the first index has the spacecraft sunlit
+        # charging_schedule = self.satellite.earth_satellite.at(self.satellite.times).is_sunlit(self.satellite.ephemeris)
+        sunlit_schedule = self.earth_satellite.at(times).is_sunlit(self.ephemeris)
+
+        print(f'First index: {sunlit_schedule[0]}')
+        print(f'Last index: {sunlit_schedule[-1]}')
+
+        # If the first index is not sunlit, then we need to adjust the times
+        if not sunlit_schedule[0]:
+            start_sunlit_index = np.where(sunlit_schedule)[0][0]
+            times = times[start_sunlit_index:]
+            geocentric = geocentric[start_sunlit_index:]
+
+        # If the last index is not sunlit, then we need to adjust the times
+        if not sunlit_schedule[-1]:
+            end_sunlit_index = np.where(sunlit_schedule)[0][-1]
+            times = times[:end_sunlit_index + 1]
+            geocentric = geocentric[:end_sunlit_index + 1]
 
         # Convert geocentric positions to WGS84 geographic positions
         self._convert_geocentric_to_lat_lon_alt(geocentric, times)
