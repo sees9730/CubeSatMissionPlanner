@@ -8,8 +8,8 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 warnings.filterwarnings("ignore", category=UserWarning, message="No artists with labels found to put in legend")
 
-%reload_ext autoreload
-%autoreload 2
+# %reload_ext autoreload
+# %autoreload 2
 from PlanningObjects.CubeSatMission import CubeSatMission
 import logging
 # import PlanningObjects.Satellite
@@ -30,8 +30,9 @@ import logging
 program_options = {}
 program_options['Target Availability Check'] = True
 program_options['Survey Availability Check'] = False
-# program_options['Pointing Debug'] = True
 program_options['Pointing Debug'] = False
+program_options['Observe Targets'] = True
+program_options['JSON Plotting Only'] = False
 
 # Load the Excel file
 # excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_EARLY_SCIENCE.xlsx'
@@ -42,12 +43,17 @@ program_options['Pointing Debug'] = False
 # excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_2_VIS.xlsx'
 # excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_1_VIS.xlsx'
 # excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
+
 excel_file_path = 'Data Files/MANTIS_Mission_Config_v2.xlsx'
+# excel_file_path = 'Data Files/MANTIS_Mission_Config_v2_SPRITE_test_VW_20250513.xlsx'
+json_file_path = 'JSON_1.json'
 
 # Create the MissionConfig object
-cubesat_mission = CubeSatMission(excel_file_path, program_options)
+cubesat_mission = CubeSatMission(excel_file_path=excel_file_path, program_options=program_options)
+# cubesat_mission = CubeSatMission(program_options=program_options, json_file_path=json_file_path)
 cubesat_mission.plot_satellite_positions()
 cubesat_mission._plot_operations(1)
+cubesat_mission.plot_mission_overview()
 # cubesat_mission.plot_eclipse_summary(14)
 # cubesat_mission.plot_target_visibility_heatmap("TW Hya_A")
 
@@ -138,4 +144,6 @@ cubesat_mission._plot_operations(1)
 
 # if __name__ == '__main__':
 #     main()
+# %%
+
 # %%

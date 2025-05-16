@@ -30,6 +30,7 @@ import matplotlib.dates as mdates
 from matplotlib.path import Path
 import numpy as np
 import json
+import os
 from collections import defaultdict
 import cartopy.crs as ccrs
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
@@ -65,8 +66,9 @@ class CubeSatMission:
         A schedule of the operations for the mission.
     """
 
-    def __init__(self, excel_file_path: str,
-                 program_options: Dict[str, bool]):
+    def __init__(self, excel_file_path: str = None,
+                 program_options: Dict[str, bool] = None,
+                 json_file_path: str = None):
                 #  science_mission: 'ScienceMission',
                 #  mission_config: 'MissionConfig',
                 #  satellite: 'Satellite',
@@ -78,6 +80,8 @@ class CubeSatMission:
         self.target_av_check = program_options['Target Availability Check']
         self.survey_av_check = program_options['Survey Availability Check']
         self.pointing_debug = program_options['Pointing Debug']
+        self.observe_targets = program_options['Observe Targets']
+        self.json_plotting_only = program_options['JSON Plotting Only']
 
         self.schedules = []
         self._create_mission_config(excel_file_path)
@@ -459,17 +463,18 @@ class CubeSatMission:
         self.operations.append(Schedule("Before Pointing Operations Schedule", self.satellite.start_time, self.satellite.end_time,
                                         self.satellite.time_step_sec, self.satellite.times, operations_schedule_bp, MissionStatus))
 
-        # Allocate pointing operations and choose targets to observe
-        self._allocate_pointing_operations(operations_schedule, self.pointing_debug)
+        if self.observe_targets:
+            # Allocate pointing operations and choose targets to observe
+            self._allocate_pointing_operations(operations_schedule, self.pointing_debug)
 
-        # Allocate pointing windows for charging
-        self._allocate_pointing_windows_for_charging(operations_schedule)
+            # Allocate pointing windows for charging
+            self._allocate_pointing_windows_for_charging(operations_schedule)
 
-        # Handle edge cases for downtime
-        self._handle_edge_cases_for_downtime(operations_schedule)
+            # Handle edge cases for downtime
+            self._handle_edge_cases_for_downtime(operations_schedule)
 
-        # Update the eclipses with the final operations schedule
-        self._update_eclipses(operations_schedule)
+            # Update the eclipses with the final operations schedule
+            self._update_eclipses(operations_schedule)
         
         # Save the operations schedule after pointing operations
         operations_schedule_ap = np.copy(operations_schedule)
@@ -786,7 +791,7 @@ class CubeSatMission:
             for gs in self.ground_stations:
                 gs_visibility = gs.visibility.status
                 # Check if the ground station is visible at the action time
-                index_time = np.where(self.satellite.times == action_time)
+                # index_time = np.where(self.satellite.times == action_time)
                 print(gs.name, action_time_index, gs_visibility[action_time_index])
                 if gs_visibility[action_time_index]:
                     gs_name = gs.name
@@ -2156,9 +2161,78 @@ class CubeSatMission:
             if operation.name == name:
                 return operation
     
+    # def plot_battery_charge_plot(self):
+    #     """
+    #     Generates a battery charge plot based on power budget and action list.
+
+    #     Args:
+    #         None
+
+    #     Returns:
+    #         None (plots the battery charge profile)
+    #     """
+
+    #     # Get the power budget information
+    #     net_energy_dict = Helpers.get_energy_dict(self.mission_config)
+    #     initial_charge = net_energy_dict['INITIAL_CHARGE']
+    #     max_charge = net_energy_dict['MAXIMUM_CHARGE']
+
+    #     # Loop through the actions
+    #     current_node = self.commands_list.head_node
+
+    #     # Initialize the arrays for plotting
+    #     battery_charge_joules = [initial_charge]
+    #     battery_charge_time = [current_node.getData().getTime()]
+
+    #     while current_node:
+    #         # Get the data for the current node
+    #         action = current_node.getData()
+    #         action_time = action.getTime()
+    #         action_duration = action.getDuration()
+    #         action_energy = action.getEnergy()
+
+    #         # Update the arrays
+    #         battery_charge_joules.append(min(battery_charge_joules[-1] + action_energy, max_charge))
+    #         battery_charge_time.append(action_time + action_duration)
+
+    #         # Move to the next node
+    #         current_node = current_node.getNextNode()
+
+    #     # Prepare eclipse times
+    #     eclipse_times = []
+    #     for eclipse in self.science_mission.eclipses:
+    #         for i in range(2):
+    #             eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+
+    #     # Create a smooth interpolated curve
+    #     x = [(time - battery_charge_time[0]).total_seconds() for time in battery_charge_time]
+    #     print(x)
+    #     print(battery_charge_joules)
+    #     interp_line = make_interp_spline(x, battery_charge_joules)
+    #     X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status))
+    #     Y = interp_line(X) / 1000
+    #     X = [battery_charge_time[0] + datetime.timedelta(seconds=time) for time in X]
+
+    #     # Create the plot
+    #     plt.figure(figsize=(10, 6))
+    #     plt.title('Power Profile Through Plan', fontsize=20)
+    #     plt.plot(X, Y, color='#FF5003', linewidth=4)
+
+    #     # Highlight eclipse periods
+    #     for start, end in zip(eclipse_times[::2], eclipse_times[1::2]):
+    #         plt.axvspan(start, end, color='lightsteelblue', alpha=0.3)
+
+    #     # Format the plot
+    #     plt.ylabel('Total Energy [kJ]', fontsize=15)
+    #     plt.xlabel('Time in UTC', fontsize=15)
+    #     plt.grid(which='both', linestyle='--', linewidth=0.2)
+    #     plt.xticks(rotation=45)
+    #     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+    #     plt.show()
+
     def plot_battery_charge_plot(self):
         """
-        Generates a battery charge plot based on power budget and action list.
+        Generates a realistic battery charge plot based on power budget and action list.
 
         Args:
             None
@@ -2199,157 +2273,703 @@ class CubeSatMission:
             for i in range(2):
                 eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
 
-        # Create a smooth interpolated curve
-        x = [(time - battery_charge_time[0]).total_seconds() for time in battery_charge_time]
-        print(x)
-        print(battery_charge_joules)
-        interp_line = make_interp_spline(x, battery_charge_joules)
-        X = np.linspace(min(x), max(x), len(self.get_operation_by_name("Final Operations Schedule").status))
-        Y = interp_line(X) / 1000
-        X = [battery_charge_time[0] + datetime.timedelta(seconds=time) for time in X]
-
+        # Create time points for a more detailed plot with proper constraint enforcement
+        x_seconds = [(time - battery_charge_time[0]).total_seconds() for time in battery_charge_time]
+        
+        # Create a piecewise linear interpolation - more realistic for battery charging
+        from scipy.interpolate import interp1d
+        
+        # Create a denser set of points for smoother appearance while respecting constraints
+        X_seconds = np.linspace(min(x_seconds), max(x_seconds), 1000)
+        
+        # Use piecewise linear interpolation which respects the limits better
+        interp_func = interp1d(x_seconds, battery_charge_joules, kind='linear')
+        Y_interp = interp_func(X_seconds)
+        
+        # Apply battery physical constraints (no exceeding max charge)
+        Y_constrained = np.minimum(Y_interp, max_charge)
+        
+        # Convert back to datetime for plotting
+        X_datetime = [battery_charge_time[0] + datetime.timedelta(seconds=time) for time in X_seconds]
+        
+        # Convert to kJ for display
+        Y_kJ = Y_constrained / 1000
+        
         # Create the plot
         plt.figure(figsize=(10, 6))
-        plt.title('Power Profile Through Plan', fontsize=20)
-        plt.plot(X, Y, color='#FF5003', linewidth=4)
-
+        plt.title('Battery Charge Profile', fontsize=20)
+        
+        # Plot the constrained interpolation as the main curve
+        plt.plot(X_datetime, Y_kJ, color='#FF5003', linewidth=4, label='Battery Charge')
+        
+        # Optional: Add the actual data points for reference
+        # plt.scatter([battery_charge_time[0] + datetime.timedelta(seconds=sec) for sec in x_seconds], 
+        #             [charge/1000 for charge in battery_charge_joules], 
+        #             color='blue', s=30, alpha=0.6, label='Action Points')
+        
+        # Add a horizontal line for max capacity
+        plt.axhline(y=max_charge/1000, color='k', linestyle='--', 
+                    linewidth=1.5, label=f'Max Capacity ({max_charge/1000:.1f} kJ)')
+        
         # Highlight eclipse periods
         for start, end in zip(eclipse_times[::2], eclipse_times[1::2]):
             plt.axvspan(start, end, color='lightsteelblue', alpha=0.3)
-
+            
+        # Add legend to explain the elements
+        plt.legend(loc='best')
+        
         # Format the plot
-        plt.ylabel('Total Energy [kJ]', fontsize=15)
+        plt.ylabel('Battery Charge [kJ]', fontsize=15)
         plt.xlabel('Time in UTC', fontsize=15)
         plt.grid(which='both', linestyle='--', linewidth=0.2)
         plt.xticks(rotation=45)
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+        
+        # # Add some annotations for clearer understanding
+        # # Find a charging and discharging segment to annotate
+        # for i in range(1, len(battery_charge_joules)):
+        #     if battery_charge_joules[i] > battery_charge_joules[i-1]:
+        #         # Charging segment
+        #         midpoint_idx = (x_seconds[i] + x_seconds[i-1]) / 2
+        #         midpoint_time = battery_charge_time[0] + datetime.timedelta(seconds=midpoint_idx)
+        #         midpoint_charge = (battery_charge_joules[i] + battery_charge_joules[i-1]) / 2 / 1000
+        #         plt.annotate("Charging", xy=(midpoint_time, midpoint_charge),
+        #                     xytext=(midpoint_time, midpoint_charge+max_charge/10000),
+        #                     arrowprops=dict(facecolor='green', shrink=0.05, width=1.5),
+        #                     fontsize=10, color='green', ha='center')
+        #         break
+        
+        # for i in range(1, len(battery_charge_joules)):
+        #     if battery_charge_joules[i] < battery_charge_joules[i-1]:
+        #         # Discharging segment
+        #         midpoint_idx = (x_seconds[i] + x_seconds[i-1]) / 2
+        #         midpoint_time = battery_charge_time[0] + datetime.timedelta(seconds=midpoint_idx)
+        #         midpoint_charge = (battery_charge_joules[i] + battery_charge_joules[i-1]) / 2 / 1000
+        #         plt.annotate("Discharging", xy=(midpoint_time, midpoint_charge),
+        #                     xytext=(midpoint_time, midpoint_charge-max_charge/10000),
+        #                     arrowprops=dict(facecolor='red', shrink=0.05, width=1.5),
+        #                     fontsize=10, color='red', ha='center')
+        #         break
+        
+        plt.tight_layout()
         plt.show()
 
     def plot_target_completion(self):
-
-        # current_node = self.commands_list.head_node
-        # target_completion = {}
-        # last_eclipse_num = -1
-    
-        # while current_node:
-
-        #     # Get the data for the current node
-        #     command = current_node.data
-        #     eclipse_num = command.eclipse_num
+        """
+        Generates an enhanced plot showing target observation completion over time.
         
-        #     # If the command is a target exposure
-        #     if command.key in ['TARGET1', 'TARGET2'] and eclipse_num != last_eclipse_num:
+        This function tracks cumulative exposure time for each target and displays
+        it as a step plot, with various visual enhancements for clarity.
+        
+        Args:
+            None
             
-        #         # print(command.key, command.eclipse_num)
-        #         eclipse_num = command.eclipse_num
-        #         eclipse = self.science_mission.eclipses[eclipse_num]
-
-        #         # Get the index of the target
-        #         if command.key == 'TARGET1':
-        #             index = 0
-        #         elif command.key == 'TARGET2':
-        #             index = 1
-
-        #         # Get the target name and exposure
-        #         target_exposure_name = eclipse.targets_names[index]
-        #         target_exposure_time = eclipse.targets_exp_times[index]
-
-        #         # Update/Create the target completion dictionary
-        #         try:
-        #             target_completion[target_exposure_name].append(target_exposure_time)
-        #             target_completion[target_exposure_name + '_times'].append(command.time)
-        #         except:
-        #             target_completion[target_exposure_name] = [0, target_exposure_time]
-        #             target_completion[target_exposure_name + '_times'] = [self.satellite.times.utc_datetime()[0], command.time]
-
-        #         last_eclipse_num = eclipse_num
-
-        #     # Move to the next node
-        #     current_node = current_node.getNextNode()
-
-        # # Store the targets completion
-        # self.target_completion = target_completion
-
-        
-        
+        Returns:
+            None (displays the plot)
+        """
+        # Initialize data structures
         current_node = self.commands_list.head_node
         target_completion_names = []
-        target_completion_exp_times = [] # Exposure times in seconds
-        target_completion_exc_times = [] # Time of execution
-    
+        target_completion_exp_times = []  # Exposure times in seconds
+        target_completion_exc_times = []  # Time of execution
+        
+        # Process the command list to extract target observations
         while current_node:
-
             # Get the data for the current node
             command = current_node.data
             command_key = command.key
             command_time = command.time
 
-            print(command_key, command.time)
-            # If the command is a target exposure
+            # If the command is a target exposure (not a system operation)
             if MissionStatus.get_value(command_key) is None:
                 eclipse_num = command.eclipse_num
                 eclipse = self.science_mission.eclipses[eclipse_num]
-                if "TARGET1" in command_key:
+                
+                # Extract target name from command key
+                if "TARGET1" in command_key or "TARGET2" in command_key:
                     target_name = command_key.split(": ")[1]
-                index = eclipse.targets_names.index(target_name)
-                target_exposure_sec = eclipse.targets_exp_times[index]
-                target_completion_names.append(target_name)
-                target_completion_exp_times.append(target_exposure_sec)
-                target_completion_exc_times.append(command_time)
+                    index = eclipse.targets_names.index(target_name)
+                    target_exposure_sec = eclipse.targets_exp_times[index]
+                    
+                    target_completion_names.append(target_name)
+                    target_completion_exp_times.append(target_exposure_sec)
+                    target_completion_exc_times.append(command_time)
 
             # Move to the next node
             current_node = current_node.getNextNode()
 
-        # Calculate cumulative sums for each target
-        cumulative_sums = OrderedDict((name, []) for name in target_completion_names)
-        running_totals = {name: 0 for name in set(target_completion_names)}
+        # Calculate cumulative sums for each unique target
+        unique_targets = list(set(target_completion_names))
+        running_totals = {name: 0 for name in unique_targets}
+        
+        # Create arrays to store cumulative exposure times
+        cumulative_times_by_target = {}
+        for target in unique_targets:
+            cumulative_times_by_target[target] = []
+        
+        # Process observations chronologically
+        sorted_indices = np.argsort([t.timestamp() for t in target_completion_exc_times])
+        sorted_names = [target_completion_names[i] for i in sorted_indices]
+        sorted_times = [target_completion_exp_times[i] for i in sorted_indices]
+        sorted_exec_times = [target_completion_exc_times[i] for i in sorted_indices]
+        
+        # Build cumulative exposure time for each target
+        for target in unique_targets:
+            current_total = 0
+            target_cumulative = []
+            
+            for name, time, exec_time in zip(sorted_names, sorted_times, sorted_exec_times):
+                if name == target:
+                    current_total += time
+                target_cumulative.append((exec_time, current_total))
+            
+            # Store chronological (time, cumulative_exposure) pairs
+            cumulative_times_by_target[target] = target_cumulative
+        
+        # Get target requirements/goals from the mission configuration
+        target_goals = {}
+        for target in unique_targets:
+            try:
+                # Get the target's survey
+                target_survey = self.science_mission.get_survey_of_target(target)
 
-        for name, time in zip(target_completion_names, target_completion_exp_times):
-            print(name, time)
-            running_totals[name] += time
-            for key in cumulative_sums.keys():
-                if key == name:
-                    cumulative_sums[key].append(running_totals[key])
+                # Get the index of the survey in the mission configuration
+                survey_index = self.mission_config.survey_info["Survey"].to_list().index(target_survey.name)
+
+                # Get the exposure time per pointing for the target
+                exp_time_per_pointing = self.mission_config.survey_info["ExpTime Per Pointing [s]"][survey_index]
+
+                # Add the target's goal to the dictionary
+                target_goals[target] = exp_time_per_pointing
+            except (AttributeError, KeyError, ValueError, IndexError) as e:
+                # If there's an error getting the goal, output info for debugging
+                print(f"Could not get goal for target {target}: {e}")
+                # Set a default goal based on achieved value if available
+                if cumulative_times_by_target[target] and len(cumulative_times_by_target[target]) > 0:
+                    # Fall back to using the achieved value as the goal
+                    target_goals[target] = cumulative_times_by_target[target][-1][1]
                 else:
-                    cumulative_sums[key].append(running_totals[key] if cumulative_sums[key] else 0)
-
-        # Convert the dictionary to a list of arrays for each name
-        cumulative_sums_arrays = {name: np.array(times) for name, times in cumulative_sums.items()}
-
-        # Store the targets completion
-        self.target_completion = cumulative_sums
-
-        # Plot the target completion
-        plt.figure(figsize=(10, 6))
-        plt.title('Target Completion Through Plan', fontsize=20)
-
+                    # Default to a reasonable value if no achievement data
+                    target_goals[target] = 600  # 10 minutes in seconds
+        
+        # Calculate completion percentages
+        target_completion_percentages = {}
+        total_exposure_time = 0
+        
+        for target in unique_targets:
+            if cumulative_times_by_target[target]:
+                final_value = cumulative_times_by_target[target][-1][1]  # Final exposure in seconds
+                total_exposure_time += final_value
+                
+                if target in target_goals and target_goals[target] > 0:
+                    # Calculate percentage based on goal
+                    target_completion_percentages[target] = (final_value / target_goals[target]) * 100
+                else:
+                    # No goal defined, set to 100% (fully completed)
+                    target_completion_percentages[target] = 100.0
+        
+        # Store the targets completion data
+        self.target_completion = cumulative_times_by_target
+        
+        # Create figure with main title at the very top and more space at the bottom
+        fig = plt.figure(figsize=(12, 9))  # Increased height further to accommodate all elements
+        
+        # Add the main title outside of any subplot area
+        fig.suptitle('Target Observation Completion', fontsize=20, y=0.98)
+        
+        # Create main plotting axis with proper spacing for title and percentage bars
+        ax1 = fig.add_subplot(111)
+        plt.subplots_adjust(top=0.82)  # Leave space for percentage bars AND title
+        
         # Get the eclipse times
         eclipse_times = []
         for eclipse in self.science_mission.eclipses:
             for i in range(2):
                 eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
-
-        # Highlight eclipse periods
+        
+        # Highlight eclipse periods without labeling
         for i in range(0, len(eclipse_times), 2):
-            start_index = eclipse_times[i]
             if i + 1 < len(eclipse_times):
-                end_index = eclipse_times[i + 1]
-                plt.axvspan(start_index, end_index, color = 'lightsteelblue', alpha = 0.3)
-
-        for name, cumulative_sum in cumulative_sums_arrays.items():
-            plt.plot(target_completion_exc_times, cumulative_sum/1000, label = name,  drawstyle = 'steps-post', linewidth = 4)
-
-        plt.ylabel('Kiloseconds of Exposure', fontsize = 15)
-        plt.xlabel('Time in UTC', fontsize = 15)
-        plt.xticks(rotation = 45)
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
-        plt.grid(alpha = 0.3)
-        plt.legend()
+                start_time = eclipse_times[i]
+                end_time = eclipse_times[i + 1]
+                
+                # Highlight eclipse period without adding text labels
+                plt.axvspan(start_time, end_time, color='lightsteelblue', alpha=0.3)
+        
+        # Create a separate axis for completion percentage bars below the title but above the main plot
+        ax2 = fig.add_axes([0.1, 0.85, 0.8, 0.05])  # [left, bottom, width, height]
+        
+        # Plot each target's cumulative exposure with enhanced styling
+        colors = plt.cm.tab10(np.linspace(0, 1, len(unique_targets)))
+        markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+        
+        # Draw the completion percentage bars
+        bar_positions = np.arange(len(unique_targets))
+        bar_heights = [target_completion_percentages.get(target, 0) for target in unique_targets]
+        bar_colors = [colors[i % len(colors)] for i in range(len(unique_targets))]
+        
+        # Plot percentage bars (capped at 100%)
+        capped_bar_heights = [min(h, 100) for h in bar_heights]
+        bars = ax2.barh(bar_positions, capped_bar_heights, height=0.6, color=bar_colors, alpha=0.7)
+        
+        # Add target labels and percentage annotations
+        for i, (target, bar) in enumerate(zip(unique_targets, bars)):
+            # Add target name at left
+            ax2.text(-5, i, target, ha='right', va='center', fontsize=9)
+            
+            # Add percentage at right of each bar
+            completion_pct = target_completion_percentages.get(target, 0)
+            bar_width = min(completion_pct, 100)  # Cap display at 100%
+            
+            if completion_pct > 100:
+                # Show overachievement
+                label = f"{completion_pct:.0f}% ({(completion_pct-100):.0f}% over)"
+                color = 'darkgreen'
+            else:
+                label = f"{completion_pct:.0f}%"
+                color = 'black'
+                
+            ax2.text(bar_width + 2, i, label, va='center', fontsize=9, color=color)
+        
+        # Format the percentage axis
+        ax2.set_xlim(0, 105)  # Leave space for labels
+        ax2.set_ylim(-0.5, len(unique_targets) - 0.5)
+        ax2.set_title('Target Completion Percentage', fontsize=12)
+        ax2.xaxis.set_ticks([0, 25, 50, 75, 100])
+        ax2.yaxis.set_visible(False)  # Hide y-axis labels since we added our own
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['top'].set_visible(False)
+        ax2.spines['left'].set_visible(False)
+        
+        # Return to the main axis for the time series
+        plt.sca(ax1)
+        
+        # Plot each target's cumulative exposure over time
+        for idx, target in enumerate(unique_targets):
+            # Extract time and cumulative values
+            times = [pair[0] for pair in cumulative_times_by_target[target]]
+            values = [pair[1]/60 for pair in cumulative_times_by_target[target]]  # Convert to minutes
+            
+            # Plot the step function
+            plt.step(times, values, where='post', 
+                    label=f"{target}", 
+                    linewidth=2.5, 
+                    color=colors[idx % len(colors)],
+                    marker=markers[idx % len(markers)],
+                    markersize=6,
+                    markevery=max(1, len(times)//8))  # Show markers periodically
+        
+        # Enhance the plot formatting
+        plt.ylabel('Cumulative Exposure Time (minutes)', fontsize=15)
+        plt.xlabel('UTC Time', fontsize=15)
+        # Improve x-axis labels for better readability
+        plt.xticks(ha='right')
+        # ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+        
+        # Add some padding to ensure x-axis labels are visible
+        ax1.tick_params(axis='x', pad=8)
+        ax1.set_xlabel('UTC Time', fontsize=15, labelpad=15)  # Increased labelpad
+        plt.grid(linestyle='--', alpha=0.4)
+        
+        # Create a better legend
+        legend = plt.legend(title="Observation Targets", 
+                        loc='upper left', 
+                        fontsize=10,
+                        framealpha=0.9)
+        legend.get_title().set_fontsize(12)
+        
+        # Add final exposure time annotations at the end of each line
+        last_times = {}
+        last_values = {}
+        
+        for target in unique_targets:
+            if cumulative_times_by_target[target]:
+                last_times[target] = cumulative_times_by_target[target][-1][0]
+                last_values[target] = cumulative_times_by_target[target][-1][1]/60  # Minutes
+        
+        # Stagger annotations to avoid overlap
+        targets_by_final_time = sorted(unique_targets, key=lambda t: last_times[t])
+        stagger_offset = 0
+        
+        for idx, target in enumerate(targets_by_final_time):
+            plt.annotate(f"{last_values[target]:.1f} min", 
+                        xy=(last_times[target], last_values[target]),
+                        xytext=(10, 5 + stagger_offset),
+                        textcoords="offset points",
+                        fontsize=9,
+                        color=colors[unique_targets.index(target) % len(colors)],
+                        weight='bold')
+            stagger_offset = (stagger_offset + 15) % 60  # Cycle through offsets
+        
+        # Calculate summary statistics for targets
+        summary_data = {}
+        total_minutes = 0
+        completion_percentages = []
+        
+        for target in unique_targets:
+            if cumulative_times_by_target[target]:
+                final_value = cumulative_times_by_target[target][-1][1]/60  # Minutes
+                completion_pct = target_completion_percentages.get(target, 0)
+                summary_data[target] = (final_value, completion_pct)
+                total_minutes += final_value
+                completion_percentages.append(completion_pct)
+        
+        # Calculate overall statistics
+        avg_completion = sum(completion_percentages) / len(completion_percentages) if completion_percentages else 0
+        
+        # Create a summary table at the bottom of the plot instead of in a text box
+        # Adjust the main plot to make room at the bottom
+        plt.subplots_adjust(bottom=0.25)
+        
+        # Position the summary table with more space between it and the main plot
+        summary_ax = fig.add_axes([0.1, 0.02, 0.8, 0.15])  # Lower position for summary table
+        summary_ax.axis('off')  # Hide axis
+        
+        # Create table data
+        table_data = []
+        for target, (time, pct) in summary_data.items():
+            table_data.append([target, f"{time:.1f} min", f"{pct:.0f}%"])
+        
+        # Add totals row
+        table_data.append(["Total", f"{total_minutes:.1f} min", f"{avg_completion:.0f}% avg"])
+        
+        # Create the table
+        table = summary_ax.table(
+            cellText=table_data,
+            colLabels=["Target", "Observation Time", "Completion"],
+            loc='center',
+            cellLoc='center',
+            colWidths=[0.4, 0.3, 0.3]
+        )
+        
+        # Style the table
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 1.5)  # Adjust table size
+        
+        # Highlight the total row
+        for j in range(3):
+            cell = table[(len(table_data), j)]
+            cell.set_facecolor('lightgray')
+            cell.set_text_props(weight='bold')
+        
+        # Set up the layout with precise control over spacing
+        plt.tight_layout()
+        
+        # Apply specific adjustments to ensure all elements are visible
+        plt.subplots_adjust(
+            top=0.82,      # Space for title and percentage bars at top
+            bottom=0.25,   # Significant space for x-axis labels and summary table
+            left=0.10,     # Left margin
+            right=0.95     # Right margin
+        )
         plt.show()
-
+        
+        # Print summary information
         print("-----Targets Observed in Order-----")
-        for name, cumulative_sum in cumulative_sums_arrays.items():
-            print(f'{name} = {cumulative_sum[-1]/60} min')
+        for target in unique_targets:
+            if cumulative_times_by_target[target]:
+                final_value = cumulative_times_by_target[target][-1][1]/60  # Minutes
+                completion_pct = target_completion_percentages.get(target, 0)
+                print(f"{target} = {final_value:.2f} min ({completion_pct:.1f}%)")
+
+    # def plot_target_completion(self):
+    #     """
+    #     Generates an enhanced plot showing target observation completion over time.
+        
+    #     This function tracks cumulative exposure time for each target and displays
+    #     it as a step plot, with various visual enhancements for clarity.
+        
+    #     Args:
+    #         None
+            
+    #     Returns:
+    #         None (displays the plot)
+    #     """
+    #     # Initialize data structures
+    #     current_node = self.commands_list.head_node
+    #     target_completion_names = []
+    #     target_completion_exp_times = []  # Exposure times in seconds
+    #     target_completion_exc_times = []  # Time of execution
+        
+    #     # Process the command list to extract target observations
+    #     while current_node:
+    #         # Get the data for the current node
+    #         command = current_node.data
+    #         command_key = command.key
+    #         command_time = command.time
+
+    #         # If the command is a target exposure (not a system operation)
+    #         if MissionStatus.get_value(command_key) is None:
+    #             eclipse_num = command.eclipse_num
+    #             eclipse = self.science_mission.eclipses[eclipse_num]
+                
+    #             # Extract target name from command key
+    #             if "TARGET1" in command_key or "TARGET2" in command_key:
+    #                 target_name = command_key.split(": ")[1]
+    #                 index = eclipse.targets_names.index(target_name)
+    #                 target_exposure_sec = eclipse.targets_exp_times[index]
+                    
+    #                 target_completion_names.append(target_name)
+    #                 target_completion_exp_times.append(target_exposure_sec)
+    #                 target_completion_exc_times.append(command_time)
+
+    #         # Move to the next node
+    #         current_node = current_node.getNextNode()
+
+    #     # Calculate cumulative sums for each unique target
+    #     unique_targets = list(set(target_completion_names))
+    #     cumulative_sums = OrderedDict((name, []) for name in unique_targets)
+    #     running_totals = {name: 0 for name in unique_targets}
+        
+    #     # Create arrays to store cumulative exposure times
+    #     cumulative_times_by_target = {}
+    #     for target in unique_targets:
+    #         cumulative_times_by_target[target] = []
+        
+    #     # Process observations chronologically
+    #     sorted_indices = np.argsort([t.timestamp() for t in target_completion_exc_times])
+    #     sorted_names = [target_completion_names[i] for i in sorted_indices]
+    #     sorted_times = [target_completion_exp_times[i] for i in sorted_indices]
+    #     sorted_exec_times = [target_completion_exc_times[i] for i in sorted_indices]
+        
+    #     # Build cumulative exposure time for each target
+    #     for target in unique_targets:
+    #         current_total = 0
+    #         target_cumulative = []
+            
+    #         for name, time, exec_time in zip(sorted_names, sorted_times, sorted_exec_times):
+    #             if name == target:
+    #                 current_total += time
+    #             target_cumulative.append((exec_time, current_total))
+            
+    #         # Store chronological (time, cumulative_exposure) pairs
+    #         cumulative_times_by_target[target] = target_cumulative
+        
+    #     # Store the targets completion data
+    #     self.target_completion = cumulative_times_by_target
+        
+    #     # Create the plot
+    #     plt.figure(figsize=(12, 7))
+    #     plt.title('Target Observation Completion', fontsize=20)
+        
+    #     # Get the eclipse times
+    #     eclipse_times = []
+    #     for eclipse in self.science_mission.eclipses:
+    #         for i in range(2):
+    #             eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+        
+    #     # Highlight eclipse periods with improved labeling
+    #     for i in range(0, len(eclipse_times), 2):
+    #         if i + 1 < len(eclipse_times):
+    #             start_time = eclipse_times[i]
+    #             end_time = eclipse_times[i + 1]
+    #             mid_time = start_time + (end_time - start_time) / 2
+                
+    #             # Highlight eclipse period
+    #             plt.axvspan(start_time, end_time, color='lightsteelblue', alpha=0.3)
+        
+    #     # Plot each target's cumulative exposure with enhanced styling
+    #     colors = plt.cm.tab10(np.linspace(0, 1, len(unique_targets)))
+    #     markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+        
+    #     for idx, target in enumerate(unique_targets):
+    #         # Extract time and cumulative values
+    #         times = [pair[0] for pair in cumulative_times_by_target[target]]
+    #         values = [pair[1]/60 for pair in cumulative_times_by_target[target]]  # Convert to minutes
+            
+    #         # Plot the step function
+    #         plt.step(times, values, where='post', 
+    #                 label=f"{target}", 
+    #                 linewidth=2.5, 
+    #                 color=colors[idx % len(colors)],
+    #                 marker=markers[idx % len(markers)],
+    #                 markersize=6,
+    #                 markevery=max(1, len(times)//8))  # Show markers periodically
+        
+    #     # Enhance the plot formatting
+    #     plt.ylabel('Cumulative Exposure Time (minutes)', fontsize=15)
+    #     plt.xlabel('UTC Time', fontsize=15)
+    #     plt.xticks(rotation=45)
+    #     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+    #     plt.grid(linestyle='--', alpha=0.4)
+        
+    #     # Create a better legend
+    #     legend = plt.legend(title="Observation Targets", 
+    #                     loc='upper left', 
+    #                     fontsize=10,
+    #                     framealpha=0.9)
+    #     legend.get_title().set_fontsize(12)
+        
+    #     # Add final exposure time annotations at the end of each line
+    #     last_times = {}
+    #     last_values = {}
+        
+    #     for target in unique_targets:
+    #         if cumulative_times_by_target[target]:
+    #             last_times[target] = cumulative_times_by_target[target][-1][0]
+    #             last_values[target] = cumulative_times_by_target[target][-1][1]/60  # Minutes
+        
+    #     # Stagger annotations to avoid overlap
+    #     targets_by_final_time = sorted(unique_targets, key=lambda t: last_times[t])
+    #     stagger_offset = 0
+        
+    #     for idx, target in enumerate(targets_by_final_time):
+    #         plt.annotate(f"{last_values[target]:.1f} min", 
+    #                     xy=(last_times[target], last_values[target]),
+    #                     xytext=(10, 5 + stagger_offset),
+    #                     textcoords="offset points",
+    #                     fontsize=9,
+    #                     color=colors[unique_targets.index(target) % len(colors)],
+    #                     weight='bold')
+    #         stagger_offset = (stagger_offset + 15) % 60  # Cycle through offsets
+        
+    #     # Add a summary box with total observation times
+    #     summary_text = "Total Observation Times:\n"
+    #     for idx, target in enumerate(unique_targets):
+    #         if cumulative_times_by_target[target]:
+    #             final_value = cumulative_times_by_target[target][-1][1]/60  # Minutes
+    #             final_perce
+    #             summary_text += f"{target}: {final_value:.1f} min (\n"
+        
+    #     # Position the text box in the lower right corner
+    #     plt.figtext(0.85, 0.15, summary_text, 
+    #                 bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'),
+    #                 fontsize=9, verticalalignment='bottom')
+        
+    #     plt.tight_layout()
+    #     plt.show()
+        
+    #     # Print summary information
+    #     print("-----Targets Observed in Order-----")
+    #     for target in unique_targets:
+    #         if cumulative_times_by_target[target]:
+    #             final_value = cumulative_times_by_target[target][-1][1]/60  # Minutes
+    #             print(f"{target} = {final_value:.2f} min")
+
+    # def plot_target_completion(self):
+
+    #     # current_node = self.commands_list.head_node
+    #     # target_completion = {}
+    #     # last_eclipse_num = -1
+    
+    #     # while current_node:
+
+    #     #     # Get the data for the current node
+    #     #     command = current_node.data
+    #     #     eclipse_num = command.eclipse_num
+        
+    #     #     # If the command is a target exposure
+    #     #     if command.key in ['TARGET1', 'TARGET2'] and eclipse_num != last_eclipse_num:
+            
+    #     #         # print(command.key, command.eclipse_num)
+    #     #         eclipse_num = command.eclipse_num
+    #     #         eclipse = self.science_mission.eclipses[eclipse_num]
+
+    #     #         # Get the index of the target
+    #     #         if command.key == 'TARGET1':
+    #     #             index = 0
+    #     #         elif command.key == 'TARGET2':
+    #     #             index = 1
+
+    #     #         # Get the target name and exposure
+    #     #         target_exposure_name = eclipse.targets_names[index]
+    #     #         target_exposure_time = eclipse.targets_exp_times[index]
+
+    #     #         # Update/Create the target completion dictionary
+    #     #         try:
+    #     #             target_completion[target_exposure_name].append(target_exposure_time)
+    #     #             target_completion[target_exposure_name + '_times'].append(command.time)
+    #     #         except:
+    #     #             target_completion[target_exposure_name] = [0, target_exposure_time]
+    #     #             target_completion[target_exposure_name + '_times'] = [self.satellite.times.utc_datetime()[0], command.time]
+
+    #     #         last_eclipse_num = eclipse_num
+
+    #     #     # Move to the next node
+    #     #     current_node = current_node.getNextNode()
+
+    #     # # Store the targets completion
+    #     # self.target_completion = target_completion
+        
+    #     current_node = self.commands_list.head_node
+    #     target_completion_names = []
+    #     target_completion_exp_times = [] # Exposure times in seconds
+    #     target_completion_exc_times = [] # Time of execution
+    
+    #     while current_node:
+
+    #         # Get the data for the current node
+    #         command = current_node.data
+    #         command_key = command.key
+    #         command_time = command.time
+
+    #         print(command_key, command.time)
+    #         # If the command is a target exposure
+    #         if MissionStatus.get_value(command_key) is None:
+    #             eclipse_num = command.eclipse_num
+    #             eclipse = self.science_mission.eclipses[eclipse_num]
+    #             if "TARGET1" in command_key:
+    #                 target_name = command_key.split(": ")[1]
+    #             index = eclipse.targets_names.index(target_name)
+    #             target_exposure_sec = eclipse.targets_exp_times[index]
+    #             target_completion_names.append(target_name)
+    #             target_completion_exp_times.append(target_exposure_sec)
+    #             target_completion_exc_times.append(command_time)
+
+    #         # Move to the next node
+    #         current_node = current_node.getNextNode()
+
+    #     # Calculate cumulative sums for each target
+    #     cumulative_sums = OrderedDict((name, []) for name in target_completion_names)
+    #     running_totals = {name: 0 for name in set(target_completion_names)}
+
+    #     for name, time in zip(target_completion_names, target_completion_exp_times):
+    #         print(name, time)
+    #         running_totals[name] += time
+    #         for key in cumulative_sums.keys():
+    #             if key == name:
+    #                 cumulative_sums[key].append(running_totals[key])
+    #             else:
+    #                 cumulative_sums[key].append(running_totals[key] if cumulative_sums[key] else 0)
+
+    #     # Convert the dictionary to a list of arrays for each name
+    #     cumulative_sums_arrays = {name: np.array(times) for name, times in cumulative_sums.items()}
+
+    #     # Store the targets completion
+    #     self.target_completion = cumulative_sums
+
+    #     # Plot the target completion
+    #     plt.figure(figsize=(10, 6))
+    #     plt.title('Target Completion Through Plan', fontsize=20)
+
+    #     # Get the eclipse times
+    #     eclipse_times = []
+    #     for eclipse in self.science_mission.eclipses:
+    #         for i in range(2):
+    #             eclipse_times.append(self.satellite.times.utc_datetime()[eclipse.schedule_indices[i]])
+
+    #     # Highlight eclipse periods
+    #     for i in range(0, len(eclipse_times), 2):
+    #         start_index = eclipse_times[i]
+    #         if i + 1 < len(eclipse_times):
+    #             end_index = eclipse_times[i + 1]
+    #             plt.axvspan(start_index, end_index, color = 'lightsteelblue', alpha = 0.3)
+
+    #     for name, cumulative_sum in cumulative_sums_arrays.items():
+    #         plt.plot(target_completion_exc_times, cumulative_sum/1000, label = name,  drawstyle = 'steps-post', linewidth = 4)
+
+    #     plt.ylabel('Kiloseconds of Exposure', fontsize = 15)
+    #     plt.xlabel('Time in UTC', fontsize = 15)
+    #     plt.xticks(rotation = 45)
+    #     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d-%y, %H:%M:%S'))
+    #     plt.grid(alpha = 0.3)
+    #     plt.legend()
+    #     plt.show()
+
+    #     print("-----Targets Observed in Order-----")
+    #     for name, cumulative_sum in cumulative_sums_arrays.items():
+    #         print(f'{name} = {cumulative_sum[-1]/60} min')
 
         # # Plot the target completion
         # x = []
@@ -2397,8 +3017,15 @@ class CubeSatMission:
         # plt.grid(alpha = 0.3)
         # plt.legend()
 
-    def plot_mission_overview(self):
 
+    def plot_mission_overview(self):
+        """
+        Creates a bar chart overview of the mission schedule, showing time allocation for
+        different mission activities including target observations.
+        
+        This function maintains the original style and functionality while handling
+        the new target completion data structure.
+        """
         # Retrieve mission schedule data
         mission_schedule = self.get_operation_by_name('Final Operations Schedule').status
 
@@ -2408,13 +3035,19 @@ class CubeSatMission:
         subcategories = [status.name for status in MissionStatus if status.name != "TARGET1"]
         data = np.array([[schedule_counter.get(status.value, 0) * time_conversion for status in MissionStatus if status.name != "TARGET1"]], dtype=int)
 
-        # Include target completion data
-        for key, value in self.target_completion.items():
-            subcategories.append(f'TARGET: {key}')
-            data = np.append(data, [[value[-1] / 60]], axis=1)
+        # Include target completion data with fixed handling for the new data structure
+        for target_name, observation_data in self.target_completion.items():
+            if observation_data:  # Make sure there's data for this target
+                # Extract the final cumulative exposure time (in minutes)
+                # In the new structure, each entry is a (time, cumulative_exposure) tuple
+                final_exposure_min = observation_data[-1][1] / 60
+                
+                # Add to our data arrays
+                subcategories.append(f'TARGET: {target_name}')
+                data = np.append(data, [[final_exposure_min]], axis=1)
 
         # Compute statistics and filter data
-        total_counts = data.sum()
+        total_counts = np.sum(data)  # Total of all values in data
         percentages = (data / total_counts * 100).flatten()
         valid_indices = percentages > 0
         subcategories = np.array(subcategories)[valid_indices].tolist()
@@ -2430,20 +3063,79 @@ class CubeSatMission:
         # Assign colors
         bar_colors = [MissionStatus.plot_color(MissionStatus.TARGET1.value) if sub.startswith("TARGET:") else MissionStatus.plot_color(MissionStatus.get_value(sub)) for sub in subcategories]
 
+        # Create figure with improved size for better readability
+        plt.figure(figsize=(12, 7))
+        
         # Plot
         fig, ax = plt.subplots()
         bars = ax.bar(subcategories, data[0], color=bar_colors)
-        ax.set_ylabel('Time in minutes')
-        ax.set_title('Mission Schedule Overview')
+        ax.set_ylabel('Time in minutes', fontsize=12)
+        ax.set_title('Mission Schedule Overview', fontsize=16)
         ax.set_xticklabels(subcategories, rotation=30, ha='right')
         ax.set_ylim(0, max(data[0]) + 100)
         plt.grid(alpha=0.2)
 
         # Add labels
         for bar, value, pct in zip(bars, data[0], percentages):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2, f'{value:.0f}\n({pct:.1f}%)', ha='center', va='bottom', fontsize=10, color='black')
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2, 
+                    f'{value:.0f}\n({pct:.1f}%)', 
+                    ha='center', va='bottom', fontsize=10, color='black')
 
+        # Add a title with total mission time
+        total_minutes = total_counts  # total_counts is already a scalar
+        total_hours = total_minutes / 60
+        plt.figtext(0.5, 0.01, f'Total Mission Time: {total_minutes:.1f} minutes ({total_hours:.2f} hours)', 
+                ha='center', fontsize=12)
+
+        plt.tight_layout()
         plt.show()
+    # def plot_mission_overview(self):
+
+    #     # Retrieve mission schedule data
+    #     mission_schedule = self.get_operation_by_name('Final Operations Schedule').status
+
+    #     # Extract subcategories and process mission schedule data
+    #     schedule_counter = Counter(mission_schedule)
+    #     time_conversion = self.satellite.time_step_sec / 60
+    #     subcategories = [status.name for status in MissionStatus if status.name != "TARGET1"]
+    #     data = np.array([[schedule_counter.get(status.value, 0) * time_conversion for status in MissionStatus if status.name != "TARGET1"]], dtype=int)
+
+    #     # Include target completion data
+    #     for key, value in self.target_completion.items():
+    #         subcategories.append(f'TARGET: {key}')
+    #         data = np.append(data, [[value[-1] / 60]], axis=1)
+
+    #     # Compute statistics and filter data
+    #     total_counts = data.sum()
+    #     percentages = (data / total_counts * 100).flatten()
+    #     valid_indices = percentages > 0
+    #     subcategories = np.array(subcategories)[valid_indices].tolist()
+    #     data = data[:, valid_indices]
+    #     percentages = percentages[valid_indices]
+
+    #     # Sort data by percentage
+    #     sorted_indices = np.argsort(percentages)[::-1]
+    #     subcategories = [subcategories[i] for i in sorted_indices]
+    #     data = data[:, sorted_indices]
+    #     percentages = percentages[sorted_indices]
+
+    #     # Assign colors
+    #     bar_colors = [MissionStatus.plot_color(MissionStatus.TARGET1.value) if sub.startswith("TARGET:") else MissionStatus.plot_color(MissionStatus.get_value(sub)) for sub in subcategories]
+
+    #     # Plot
+    #     fig, ax = plt.subplots()
+    #     bars = ax.bar(subcategories, data[0], color=bar_colors)
+    #     ax.set_ylabel('Time in minutes')
+    #     ax.set_title('Mission Schedule Overview')
+    #     ax.set_xticklabels(subcategories, rotation=30, ha='right')
+    #     ax.set_ylim(0, max(data[0]) + 100)
+    #     plt.grid(alpha=0.2)
+
+    #     # Add labels
+    #     for bar, value, pct in zip(bars, data[0], percentages):
+    #         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2, f'{value:.0f}\n({pct:.1f}%)', ha='center', va='bottom', fontsize=10, color='black')
+
+    #     plt.show()
     # def plot_target_completion(self):
     #     """
     #     Plots the target completion over time with eclipse highlighting.
@@ -2631,28 +3323,319 @@ class CubeSatMission:
         return new_data_size
 
 
-    def plot_data_storage(self, x, y, eclipse_times):
+    # def plot_data_storage(self, x, y, eclipse_times):
 
-        # Plot the data
-        plt.figure(figsize=(10, 6))
-        plt.title('Onboard File Size Through Plan', fontsize = 20)
-        plt.plot(x, y, drawstyle='steps-post', color = '#FF5003', linewidth = 4)
-        plt.text(0.05, 0.95, "Total File Size = " + "{:.2f}".format(y[-1]) + " MB", transform=plt.gca().transAxes,
-            fontsize=12, verticalalignment='top')
+    #     # Plot the data
+    #     plt.figure(figsize=(10, 6))
+    #     plt.title('Onboard File Size Through Plan', fontsize = 20)
+    #     plt.plot(x, y, drawstyle='steps-post', color = '#FF5003', linewidth = 4)
+    #     plt.text(0.05, 0.95, "Total File Size = " + "{:.2f}".format(y[-1]) + " MB", transform=plt.gca().transAxes,
+    #         fontsize=12, verticalalignment='top')
     
+    #     # Plot the eclipses
+    #     for i in range(0, len(eclipse_times), 2):
+    #         start_index = eclipse_times[i]
+    #         if i + 1 < len(eclipse_times):
+    #             end_index = eclipse_times[i + 1]
+    #             plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
+
+    #     plt.ylabel('Lasting Data Size [MB]', fontsize = 15)
+    #     plt.xlabel('Time in UTC', fontsize = 15)
+    #     plt.grid(which='both', linestyle='--', linewidth=0.2)
+    #     x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+    #     plt.gca().xaxis.set_major_formatter(x_fmt)
+    #     plt.xticks(rotation = 45)
+
+    def plot_data_storage(self, x, y, eclipse_times):
+        """
+        Creates an enhanced visualization of onboard data storage over time.
+        
+        This function plots the satellite's onboard file size throughout the mission,
+        with visual indicators for eclipse periods, downlink events, and storage thresholds.
+        
+        Args:
+            x (list): List of datetime objects representing time points
+            y (list): List of file sizes in MB at each time point
+            eclipse_times (list): List of datetime objects marking eclipse start/end times
+            
+        Returns:
+            None (displays the plot)
+        """
+        # Create figure with improved size for better readability
+        fig = plt.figure(figsize=(12, 8))  # Increased height to accommodate table at bottom
+        
+        # Create primary axis for data storage
+        ax = plt.gca()
+        
+        # Plot title with more descriptive information
+        plt.title('Onboard Data Storage Utilization', fontsize=20, pad=15)
+        
+        # Calculate some statistics for annotations
+        max_storage = max(y)
+        final_storage = y[-1]
+        peak_idx = y.index(max_storage)
+        peak_time = x[peak_idx]
+        
+        # Identify potential downlink events (where data size decreases)
+        downlink_indices = []
+        downlink_amounts = []
+        for i in range(1, len(y)):
+            if y[i] < y[i-1]:
+                downlink_indices.append(i)
+                downlink_amounts.append(y[i-1] - y[i])
+        
+        # Plot the main data storage line with improved styling
+        plt.plot(x, y, 
+                drawstyle='steps-post', 
+                color='#FF5003',
+                linewidth=3,
+                label='Onboard Data')
+        
         # Plot the eclipses
         for i in range(0, len(eclipse_times), 2):
-            start_index = eclipse_times[i]
             if i + 1 < len(eclipse_times):
-                end_index = eclipse_times[i + 1]
-                plt.axvspan(start_index, end_index, color='lightsteelblue', alpha=0.3)
-
-        plt.ylabel('Lasting Data Size [MB]', fontsize = 15)
-        plt.xlabel('Time in UTC', fontsize = 15)
+                start_time = eclipse_times[i]
+                end_time = eclipse_times[i + 1]
+                
+                # Highlight eclipse period
+                plt.axvspan(start_time, end_time, color='lightsteelblue', alpha=0.3)
+        
+        # Add reference lines for storage thresholds
+        plt.axhline(y=max_storage, color='k', linestyle='--', alpha=0.7, 
+                    label=f'Peak Storage ({max_storage:.1f} MB)')
+        
+        # Create a summary table at the bottom of the plot instead of figtext
+        plt.subplots_adjust(bottom=0.25)  # Make room for the table
+        
+        # Create summary table data
+        summary_data = []
+        if downlink_indices:
+            # Calculate average collection rate
+            slopes = []
+            for i in range(1, len(y)):
+                if y[i] > y[i-1]:  # Only measure positive slopes (data collection)
+                    time_diff = (x[i] - x[i-1]).total_seconds()
+                    if time_diff > 0:
+                        data_rate = (y[i] - y[i-1]) / time_diff * 60  # MB per minute
+                        slopes.append(data_rate)
+            
+            avg_collection_rate = sum(slopes) / len(slopes) if slopes else 0
+            total_downlinked = sum(downlink_amounts)
+            
+            # Add rows to the summary table
+            summary_data.append(["Final Size", f"{final_storage:.2f} MB"])
+            summary_data.append(["Peak Size", f"{max_storage:.2f} MB"])
+            summary_data.append(["Avg. Collection Rate", f"{avg_collection_rate:.2f} MB/min"])
+            summary_data.append(["Total Downlinked", f"{total_downlinked:.2f} MB"])
+            summary_data.append(["Downlink Events", f"{len(downlink_indices)}"])
+        else:
+            summary_data.append(["Final Size", f"{final_storage:.2f} MB"])
+            summary_data.append(["Peak Size", f"{max_storage:.2f} MB"])
+        
+        # Create a new axis for the summary table
+        summary_ax = fig.add_axes([0.15, 0.02, 0.7, 0.15])  # [left, bottom, width, height]
+        summary_ax.axis('off')  # Hide axis
+        
+        # Create the table
+        table = summary_ax.table(
+            cellText=summary_data,
+            colLabels=["Metric", "Value"],
+            loc='center',
+            cellLoc='center',
+            colWidths=[0.4, 0.4]
+        )
+        
+        # Style the table
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 1.5)  # Adjust table size
+        
+        # Add a header row with different styling
+        for j in range(2):
+            cell = table[(0, j)]
+            cell.set_facecolor('lightgray')
+            cell.set_text_props(weight='bold')
+        
+        # Improve axis labels and formatting
+        plt.ylabel('Lasting Data Size [MB]', fontsize=15, labelpad=10)
+        plt.xlabel('Time in UTC', fontsize=15, labelpad=10)
+        
+        # Enhanced grid
         plt.grid(which='both', linestyle='--', linewidth=0.2)
-        x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
-        plt.gca().xaxis.set_major_formatter(x_fmt)
-        plt.xticks(rotation = 45)
+        
+        # Format x-axis with improved date formatting
+        # x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+        # ax.xaxis.set_major_formatter(x_fmt)
+        # plt.xticks(rotation=45)
+        
+        # Add legend with custom positioning
+        plt.legend(loc='upper left', fontsize=9)
+        
+        # Plot margins and layout
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.25)  # Ensure there's room for the table
+        
+        # Show the plot
+        plt.show()
+
+    # def plot_data_storage(self, x, y, eclipse_times):
+    #     """
+    #     Creates an enhanced visualization of onboard data storage over time.
+        
+    #     This function plots the satellite's onboard file size throughout the mission,
+    #     with visual indicators for eclipse periods, downlink events, and storage thresholds.
+        
+    #     Args:
+    #         x (list): List of datetime objects representing time points
+    #         y (list): List of file sizes in MB at each time point
+    #         eclipse_times (list): List of datetime objects marking eclipse start/end times
+            
+    #     Returns:
+    #         None (displays the plot)
+    #     """
+    #     # Create figure with improved size for better readability
+    #     plt.figure(figsize=(12, 7))
+        
+    #     # Create primary axis for data storage
+    #     ax = plt.gca()
+        
+    #     # Plot title with more descriptive information
+    #     plt.title('Onboard Data Storage Utilization', fontsize=20, pad=15)
+        
+    #     # Calculate some statistics for annotations
+    #     max_storage = max(y)
+    #     final_storage = y[-1]
+    #     peak_idx = y.index(max_storage)
+    #     peak_time = x[peak_idx]
+        
+    #     # Identify potential downlink events (where data size decreases)
+    #     downlink_indices = []
+    #     downlink_amounts = []
+    #     for i in range(1, len(y)):
+    #         if y[i] < y[i-1]:
+    #             downlink_indices.append(i)
+    #             downlink_amounts.append(y[i-1] - y[i])
+        
+    #     # Plot the main data storage line with improved styling
+    #     storage_line = plt.plot(x, y, 
+    #                         drawstyle='steps-post', 
+    #                         color='#FF5003',
+    #                         linewidth=3,
+    #                         label='Onboard Data')
+        
+    #     # # Add points marking data downlinks with annotations
+    #     # if downlink_indices:
+    #     #     for idx, amount in zip(downlink_indices, downlink_amounts):
+    #     #         plt.plot(x[idx], y[idx], 'o', 
+    #     #                 markersize=8, 
+    #     #                 markerfacecolor='green',
+    #     #                 markeredgecolor='darkgreen',
+    #     #                 markeredgewidth=1.5)
+                
+    #     #         # # Add annotation for significant downlinks (filter out tiny ones)
+    #     #         # if amount > max(downlink_amounts) * 0.1:  # Only annotate significant downlinks
+    #     #         #     plt.annotate(f"-{amount:.1f} MB", 
+    #     #         #                 xy=(x[idx], y[idx]),
+    #     #         #                 xytext=(10, -20),
+    #     #         #                 textcoords="offset points",
+    #     #         #                 arrowprops=dict(arrowstyle="->", color="darkgreen"),
+    #     #         #                 fontsize=9,
+    #     #         #                 color='darkgreen')
+        
+    #     # Enhanced eclipse visualization with eclipse numbers
+    #     for i in range(0, len(eclipse_times), 2):
+    #         if i + 1 < len(eclipse_times):
+    #             start_time = eclipse_times[i]
+    #             end_time = eclipse_times[i + 1]
+    #             mid_time = start_time + (end_time - start_time) / 2
+                
+    #             # Highlight eclipse period
+    #             plt.axvspan(start_time, end_time, color='lightsteelblue', alpha=0.3)
+                
+    #             # # Add eclipse number annotation
+    #             # eclipse_num = i // 2
+    #             # plt.text(mid_time, 0.02, f"Eclipse {eclipse_num+1}", 
+    #             #         transform=ax.get_xaxis_transform(),
+    #             #         ha='center', color='navy', fontsize=8)
+        
+    #     # Add reference lines for storage thresholds
+    #     plt.axhline(y=max_storage, color='red', linestyle='--', alpha=0.7, 
+    #                 label=f'Peak Storage ({max_storage:.1f} MB)')
+        
+    #     # # If we have a satellite memory capacity, add that threshold
+    #     # try:
+    #     #     # Try to access memory capacity from configuration
+    #     #     memory_capacity = self.mission_config.get('MEMORY_CAPACITY', None)
+    #     #     if memory_capacity:
+    #     #         memory_capacity_mb = memory_capacity / (1024 * 1024)  # Convert to MB
+    #     #         plt.axhline(y=memory_capacity_mb, color='darkred', linestyle='-', alpha=0.7, 
+    #     #                     label=f'Memory Capacity ({memory_capacity_mb:.1f} MB)')
+    #     # except:
+    #     #     # If no memory capacity available, just use 20% above peak as a reference
+    #     #     ref_capacity = max_storage * 1.2
+    #     #     plt.axhline(y=ref_capacity, color='darkred', linestyle='-', alpha=0.5, 
+    #     #                 label=f'Ref. Capacity ({ref_capacity:.1f} MB)')
+        
+    #     # Add data collection rate indicators (slopes)
+    #     slopes = []
+    #     for i in range(1, len(y)):
+    #         if y[i] > y[i-1]:  # Only measure positive slopes (data collection)
+    #             time_diff = (x[i] - x[i-1]).total_seconds()
+    #             if time_diff > 0:
+    #                 data_rate = (y[i] - y[i-1]) / time_diff * 60  # MB per minute
+    #                 slopes.append(data_rate)
+        
+    #     avg_collection_rate = sum(slopes) / len(slopes) if slopes else 0
+        
+    #     # # Annotate peak storage point
+    #     # plt.annotate(f"Peak: {max_storage:.2f} MB",
+    #     #             xy=(peak_time, max_storage),
+    #     #             xytext=(20, 10),
+    #     #             textcoords="offset points",
+    #     #             arrowprops=dict(arrowstyle="->", color="red"),
+    #     #             fontsize=10,
+    #     #             color='darkred',
+    #     #             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.8))
+        
+    #     # Create an information box with key statistics
+    #     info_text = f"Storage Statistics:\n"
+    #     info_text += f"• Final Size: {final_storage:.2f} MB\n"
+    #     info_text += f"• Peak Size: {max_storage:.2f} MB\n"
+    #     info_text += f"• Avg. Collection Rate: {avg_collection_rate:.2f} MB/min\n"
+        
+    #     if downlink_indices:
+    #         total_downlinked = sum(downlink_amounts)
+    #         info_text += f"• Total Downlinked: {total_downlinked:.2f} MB\n"
+    #         info_text += f"• Downlink Events: {len(downlink_indices)}\n"
+        
+    #     # Position the text box in the upper left
+    #     plt.figtext(0.15, 0.85, info_text, 
+    #                 bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'),
+    #                 fontsize=10, verticalalignment='top')
+        
+    #     # Improve axis labels and formatting
+    #     plt.ylabel('Data Storage [MB]', fontsize=15, labelpad=10)
+    #     plt.xlabel('Mission Time (UTC)', fontsize=15, labelpad=10)
+        
+    #     # Enhanced grid
+    #     plt.grid(which='major', linestyle='-', linewidth=0.5, alpha=0.3)
+    #     plt.grid(which='minor', linestyle=':', linewidth=0.3, alpha=0.2)
+    #     plt.minorticks_on()
+        
+    #     # Format x-axis with improved date formatting
+    #     x_fmt = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
+    #     ax.xaxis.set_major_formatter(x_fmt)
+    #     plt.xticks(rotation=45)
+        
+    #     # Add legend with custom positioning
+    #     plt.legend(loc='best', bbox_to_anchor=(0.01, 0.99), fontsize=9)
+        
+    #     # Plot margins and layout
+    #     plt.tight_layout()
+    #     plt.subplots_adjust(top=0.9, right=0.95)
+        
+    #     # Show the plot
+    #     plt.show()
 
     def _plot_operations(self, num_plots = 2):
 
@@ -2719,7 +3702,7 @@ class CubeSatMission:
             fig.tight_layout()
             date_format = mdates.DateFormatter('%m-%d-%y, %H:%M:%S')
             plt.gca().xaxis.set_major_formatter(date_format)
-            # plt.xticks(rotation = 15)
+            plt.xticks(rotation = 15)
             plt.show()
 
     def plot_eclipse_summary(self, eclipse_num: int):
@@ -3036,9 +4019,13 @@ class CubeSatMission:
         ax.plot(target1_lon, target1_lat, color = MissionStatus.plot_color(MissionStatus.TARGET1.value), linewidth = 4)
         ax.plot(target2_lon, target2_lat, color = MissionStatus.plot_color(MissionStatus.TARGET2.value), linewidth = 4)
 
-        plt.title('Groundtrack for SPRITE on Sample Day', fontsize = 20)
+        plt.title('Groundtrack for MANTIS on Sample Day', fontsize = 20)
         plt.show()
-        plt.savefig(fname = './Plots/Groundtrack.png', dpi = 100)
+        if os.path.exists('./Plots'):
+            plt.savefig(fname = './Plots/Groundtrack.png', dpi = 100)
+        else:
+            os.mkdir('./Plots')
+            plt.savefig(fname = './Plots/Groundtrack.png', dpi = 100)
 
     def _insert_plot_nans(self, lat, lon) -> tuple:
         """
