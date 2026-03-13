@@ -183,9 +183,6 @@ class Satellite:
         # charging_schedule = self.satellite.earth_satellite.at(self.satellite.times).is_sunlit(self.satellite.ephemeris)
         sunlit_schedule = self.earth_satellite.at(times).is_sunlit(self.ephemeris)
 
-        print(f'First index: {sunlit_schedule[0]}')
-        print(f'Last index: {sunlit_schedule[-1]}')
-
         # If the first index is not sunlit, then we need to adjust the times
         if not sunlit_schedule[0]:
             start_sunlit_index = np.where(sunlit_schedule)[0][0]

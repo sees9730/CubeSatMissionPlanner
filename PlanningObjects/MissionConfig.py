@@ -51,3 +51,8 @@ class MissionConfig:
             return self.excel_input.parse(sheet_name)
         except ValueError:
             raise ValueError(f"Sheet '{sheet_name}' not found in the provided Excel file.")
+        
+    def __repr__(self):
+        return f"Number of Ground Stations: {len(self.ground_stations_info)}" \
+               f"\nNumber of Targets: {len(self.targets_info)}" \
+               f"\nNumber of Surveys: {len(self.survey_info)}" 
