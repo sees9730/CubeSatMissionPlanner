@@ -315,10 +315,15 @@ class CubeSatMission:
             # Create the skyfield target object
             target_skyfield_object = Star(ra_hours=(ra_hr, ra_min, ra_sec), dec_degrees=(dec_deg, dec_min, dec_sec))
             
-            # Get the target visibility constraints
+            # Get the target visibility constraints. earth_constraint is the minimum
+            # angle between the line of sight to the Earth's limb and the target.
             apparent = observer.at(self.satellite.times).observe(target_skyfield_object)
             alt, _, _ = apparent.apparent().altaz()
-            visible_times = (90 - alt.degrees) < self.satellite.earth_constraint
+            R_earth_km = 6378.137
+            sat_altitude_km = self.satellite.altitudes / 1000.0
+            rho_deg = np.degrees(np.arcsin(R_earth_km / (R_earth_km + sat_altitude_km)))
+            limb_alt_deg = -(90 - rho_deg)
+            visible_times = alt.degrees > (limb_alt_deg + self.satellite.earth_constraint)
             
             # Create the target schedule
             target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & ~charging_schedule & moon_invisible
