@@ -23,6 +23,7 @@ from PlanningObjects.Target import Target
 from PlanningObjects.Eclipse import Eclipse
 from PlanningObjects.Survey import Survey
 from PlanningObjects.CommandList import CommandList, Node, ActionChunk
+from PlanningObjects import CommandTemplates
 
 # Other libraries
 import matplotlib.pyplot as plt
@@ -76,6 +77,7 @@ class CubeSatMission:
         self.observe_targets = program_options['Observe Targets']
         self.write_json = program_options['Write JSON File']
         self.json_file_directory = program_options['JSON File Directory']
+        self.day_side_observation = program_options.get('Day Side Observation', False)
 
         self.schedules = []
         self._create_mission_config(excel_file_path)
@@ -308,6 +310,11 @@ class CubeSatMission:
         alt_moon, _, _ = moon_apparent.apparent().altaz()
         moon_invisible = alt_moon.degrees < self.satellite.moon_constraint
         self.satellite.moon_altitudes = alt_moon.degrees
+
+        # Precompute the Sun's apparent position once for the Sun-angle check used
+        # when day-side observation is enabled.
+        if self.day_side_observation:
+            sun_apparent = observer.at(self.satellite.times).observe(self.satellite.sun_ephemeris).apparent()
         
         for target_data in sorted_targets_data:
             target_name, ptng, ra_hr, ra_min, ra_sec, dec_deg, dec_min, dec_sec, rotation_angle, priority, target_survey = target_data
@@ -318,15 +325,25 @@ class CubeSatMission:
             # Get the target visibility constraints. earth_constraint is the minimum
             # angle between the line of sight to the Earth's limb and the target.
             apparent = observer.at(self.satellite.times).observe(target_skyfield_object)
-            alt, _, _ = apparent.apparent().altaz()
+            apparent_topo = apparent.apparent()
+            alt, _, _ = apparent_topo.altaz()
             R_earth_km = 6378.137
             sat_altitude_km = self.satellite.altitudes / 1000.0
             rho_deg = np.degrees(np.arcsin(R_earth_km / (R_earth_km + sat_altitude_km)))
             limb_alt_deg = -(90 - rho_deg)
             visible_times = alt.degrees > (limb_alt_deg + self.satellite.earth_constraint)
-            
-            # Create the target schedule
-            target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & ~charging_schedule & moon_invisible
+
+            # Create the target schedule. By default, observation is restricted to
+            # eclipse (non-charging) windows. When day-side observation is enabled,
+            # day-side timesteps are also allowed as long as the Sun-target angle
+            # (as seen from the s/c) is > 90 deg.
+            if self.day_side_observation:
+                sun_target_angle = apparent_topo.separation_from(sun_apparent).degrees
+                sun_ok = sun_target_angle > 90.0
+                charging_ok = ~charging_schedule | sun_ok
+            else:
+                charging_ok = ~charging_schedule
+            target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & charging_ok & moon_invisible
             # target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & sun_invisible & moon_invisible
             target_schedule_object = Schedule(str(target_name) + '_' + str(ptng), self.satellite.start_time, self.satellite.end_time,
                                             self.satellite.time_step_sec, self.satellite.times, target_schedule,
@@ -350,13 +367,47 @@ class CubeSatMission:
         List[Eclipse]
             A list of Eclipse objects with the data from the eclipse_info DataFrame.
         """
-        # Create the eclipse schedules based on the charging schedule
+        # Create the eclipse schedules. By default, an "eclipse" is a contiguous
+        # run where the s/c is not sunlit. When day-side observation is enabled,
+        # we start from the dark-only eclipses and extend each boundary outward
+        # through adjacent day-side slots until hitting SAA, polar, or the next
+        # dark run. This keeps one eclipse per orbit (so the pointing allocator
+        # stays O(orbit_len^2)) while letting each eclipse include day-side
+        # observable timesteps.
         overall_eclipse_schedule = ~self.get_schedule_by_name("Charging Schedule").status
-        
+
         # Get the start and end indices of contiguous ones (start and ends are inclusive)
         is_one = overall_eclipse_schedule == 1
         eclipse_starts = np.where(np.diff(np.concatenate(([0], is_one.astype(int)))) == 1)[0]
         eclipse_ends = np.where(np.diff(np.concatenate((is_one.astype(int), [0]))) == -1)[0] - 1
+
+        if self.day_side_observation:
+            saa_keepout = self.get_schedule_by_name("SAA Keepout Schedule").status
+            polar_keepout = self.get_schedule_by_name("Polar Keepout Schedule").status
+            blockers = saa_keepout | polar_keepout
+            n = len(overall_eclipse_schedule)
+            new_starts = []
+            new_ends = []
+            prev_end = -1
+            for i, (s, e) in enumerate(zip(eclipse_starts, eclipse_ends)):
+                next_start = eclipse_starts[i + 1] if i + 1 < len(eclipse_starts) else n
+                # Extend start backward through non-blocker day-side slots
+                new_s = s
+                while new_s - 1 > prev_end and not blockers[new_s - 1]:
+                    new_s -= 1
+                # Extend end forward through non-blocker day-side slots
+                new_e = e
+                while new_e + 1 < next_start and not blockers[new_e + 1]:
+                    new_e += 1
+                new_starts.append(new_s)
+                new_ends.append(new_e)
+                prev_end = new_e
+            eclipse_starts = np.array(new_starts)
+            eclipse_ends = np.array(new_ends)
+            # Rebuild overall_eclipse_schedule so slices line up with extended bounds
+            overall_eclipse_schedule = np.zeros(n, dtype=bool)
+            for s, e in zip(eclipse_starts, eclipse_ends):
+                overall_eclipse_schedule[s:e + 1] = True
 
         # Create the Eclipse objects
         eclipse_objects = []
@@ -792,182 +843,35 @@ class CubeSatMission:
         utc_time = action_time.strftime("%Y/%j-%H:%M:%S")  # DOY format
 
         if action_key == 'DOWNLINK':
-            # Figure out which ground station to use
+            gs_name = None
             for gs in self.ground_stations:
-                gs_visibility = gs.visibility.status
-                # Check if the ground station is visible at the action time
-                # index_time = np.where(self.satellite.times == action_time)
-                # print(gs.name, action_time_index, gs_visibility[action_time_index])
-                if gs_visibility[action_time_index]:
+                if gs.visibility.status[action_time_index]:
                     gs_name = gs.name
-                
-            # print(f"NAME: {gs_name}")
+            return CommandTemplates.downlink_command(utc_time, action_time, action_duration_min, gs_name)
 
-            command = {
-                "utc_time": utc_time
-            }
-            command["command_type"] = "placeholder"
-            command["mnemonic"] = f"{gs_name} Passover"
-            los_time = action_time + action_duration_min
-            command["args"] = {
-                "los_time": los_time.strftime("%Y/%j-%H:%M:%S")
-            }
-            return command
-        
         elif action_key == 'SAA':
-            command = {
-                "utc_time": utc_time,
-                "command_type": "placeholder",
-                "mnemonic": "SAA",
-                "args": {}
-            }
-            return command
-        
+            return CommandTemplates.saa_command(utc_time)
+
         elif action_key == 'POLAR':
-            command = {
-                "utc_time": utc_time,
-                "command_type": "placeholder",
-                "mnemonic": "Polar Keepout",
-                "args": {}
-            }
-            return command
-    
+            return CommandTemplates.polar_command(utc_time)
+
         elif action_key == 'CHARGING':
-            command = {
-                "utc_time": utc_time,
-                "command_type": "placeholder",
-                "mnemonic": "Charging",
-                "args": {}
-            }
-            return command
-        
+            return CommandTemplates.charging_command(utc_time)
+
         elif action_key == 'SLEWING':
-            if next_action_key not in [None, 'DOWNTIME', 'CHARGING', 'OBSERVING', 'SLEWING', 'DOWNLINK', 'SAA', 'POLAR']:  # Must be a science target
-                # Get the target name
+            if next_action_key not in [None, 'DOWNTIME', 'CHARGING', 'OBSERVING', 'SLEWING', 'DOWNLINK', 'SAA', 'POLAR']:
                 target = self.science_mission.get_target_by_name(next_action_key)
                 roll = target.rotation_angle
                 dec = target.skyfield_object.dec.degrees
                 ra = target.skyfield_object.ra._degrees
-
-                # Get the pointing quaternion
                 q = self.get_pointing_quaternion(ra, dec, roll)
-                q_1 = q[1]
-                q_2 = q[2]
-                q_3 = q[3]
-                q_4 = q[0]
-                
+                q_1, q_2, q_3, q_4 = q[1], q[2], q[3], q[0]
             else:
                 return None
-            # phi = 
-            # phi = roll * 0.5
-            # theta = -1 * declination * 0.5  # Note: negative sign as in MATLAB code
-            # psi = right_ascension * 0.5
-            
-            # # Compute quaternion components using cosd and sind functions
-            # q_4 = cosd(psi) * cosd(theta) * cosd(phi) + sind(psi) * sind(theta) * sind(phi)
-            # q_1 = cosd(psi) * cosd(theta) * sind(phi) - sind(psi) * sind(theta) * cosd(phi)
-            # q_2 = cosd(psi) * sind(theta) * cosd(phi) + sind(psi) * cosd(theta) * sind(phi)
-            # q_3 = sind(psi) * cosd(theta) * cosd(phi) - cosd(psi) * sind(theta) * sind(phi)
+            return CommandTemplates.slewing_commands(utc_time, action_time, q_1, q_2, q_3, q_4)
 
-            # Create a list of commands
-            commands = []
-
-            # First command: HVPS standby 1 minute before slew
-            commands.append({
-                "utc_time": (action_time - datetime.timedelta(minutes=1)).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_DAC",
-                "args": {
-                    "STATE": "STANDBY"
-                }
-            })
-
-            # Second command: HVPS standby 30 seconds before slew
-            commands.append({
-                "utc_time": (action_time - datetime.timedelta(seconds=30)).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_FIXED",
-                "args": {
-                    "STATE": "STANDBY"
-                }
-            })
-
-            # Third command: Slew to the target attitude
-            commands.append({
-                "utc_time": utc_time,
-                "command_type": "xb1",
-                "mnemonic": "GOTO_ECI_ATTITUDE",
-                "args": {
-                    "PRI_CMD_DIR": 3.0,
-                    "SEC_CMD_DIR": 1.0,
-                    "Q_CMD_WRT_REF_1": q_1,
-                    "Q_CMD_WRT_REF_2": q_2,
-                    "Q_CMD_WRT_REF_3": q_3,
-                    "Q_CMD_WRT_REF_4": q_4
-                }
-            })
-
-            # Fourth command: HVPS observe 2 minutes after slew
-            commands.append({
-                "utc_time": (action_time + datetime.timedelta(minutes=2)).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_DAC",
-                "args": {
-                    "STATE": "OBSERV"
-                }
-            })
-
-            # Fifth command: HVPS observe 2 minutes, 30 seconds after slew
-            commands.append({
-                "utc_time": (action_time + datetime.timedelta(minutes=2, seconds=30)).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_FIXED",
-                "args": {
-                    "STATE": "OBSERV"
-                }
-            })
-
-            # Return the list of commands
-            return commands
-
-        elif action_key not in ['DOWNTIME', 'CHARGING', 'OBSERVING', 'SLEWING', 'DOWNLINK', 'SAA', 'POLAR']:  # Must be a science target
-            # Create a list of commands
-            commands = []
-
-            # Create the science exposure command
-            commands.append({
-                "utc_time": utc_time,
-                "command_type": "fsw",
-                "mnemonic": "SCI_START",
-                "args": {
-                    "TYPE": action_exposure_type,
-                    "TIME": action_duration_min.seconds,  # in seconds
-                    "OBS_ID": action_id,
-                    "end_utc_time": (action_time + action_duration_min).strftime("%Y/%j-%H:%M:%S"),
-                }
-            })
-
-            # Have the HVPS go on standby again
-            commands.append({
-                "utc_time": (action_time + action_duration_min).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_FIXED",
-                "args": {
-                    "STATE": "STANDBY"
-                }
-            })
-
-            commands.append({
-                "utc_time": (action_time + action_duration_min + datetime.timedelta(seconds=30)).strftime("%Y/%j-%H:%M:%S"),
-                "command_type": "fsw",
-                "mnemonic": "HV_DAC",
-                "args": {
-                    "STATE": "STANDBY"
-                }
-            })
-
-            # Return the list of commands
-            return commands
+        elif action_key not in ['DOWNTIME', 'CHARGING', 'OBSERVING', 'SLEWING', 'DOWNLINK', 'SAA', 'POLAR']:
+            return CommandTemplates.science_commands(utc_time, action_time, action_duration_min, action_id, action_exposure_type)
         return None
 
         
@@ -1198,14 +1102,19 @@ class CubeSatMission:
             print(f"Total schedule length: {length}")
             print(f"Exact time only: {exact_time_only}")
 
-        # Get valid pointing positions
+        # Get valid pointing positions. In day-side observation mode, CHARGING
+        # slots are also valid slew-through positions (the s/c can reorient while
+        # sunlit); without this the allocator cannot place a pointing sequence
+        # when OBSERVING slots sit adjacent to CHARGING inside a widened window.
         valid_pointing_statuses = [
             MissionStatus.OBSERVING.value,
             MissionStatus.DOWNTIME.value,
             MissionStatus.SAA.value,
             MissionStatus.POLAR.value
         ]
-        
+        if self.day_side_observation:
+            valid_pointing_statuses.append(MissionStatus.CHARGING.value)
+
         # PHASE 1: Look for first valid observation window
         for obs_start in range(length):
             # Skip if not a valid observation position
@@ -1297,6 +1206,18 @@ class CubeSatMission:
                 if pointing_debug:
                     print(f"Not enough observation time ({total_obs_length}) for minimum requirement ({min_target_length})")
                 continue
+
+            # In day-side observation mode, also reject windows where the actual
+            # pre+post SAA observation we would commit is below the min exposure
+            # time. Prevents orphan slews that lead into too-short observations.
+            if self.day_side_observation:
+                pre_saa_commit = min(continuous_obs_length, int(target_sequence_length))
+                remaining_after_pre = max(0, int(target_sequence_length) - pre_saa_commit)
+                post_saa_commit = min(post_saa_length, remaining_after_pre) if encountered_saa else 0
+                if pre_saa_commit + post_saa_commit < min_target_length:
+                    if pointing_debug:
+                        print(f"Day-side guard: commit {pre_saa_commit + post_saa_commit} < min {min_target_length} — skipping")
+                    continue
                 
             # At this point, we've found a valid observation window with pointing before it
             # and potentially a post-SAA continuation
@@ -1566,13 +1487,16 @@ class CubeSatMission:
         if pointing_debug:
             print(f"Valid regions for Target2: {valid_regions}")
 
-        # Get valid pointing positions - including SAA
+        # Get valid pointing positions - including SAA. In day-side mode CHARGING
+        # is also a valid slew-through status (see _allocate_target_pointing_operations).
         valid_pointing_statuses = [
             MissionStatus.OBSERVING.value,
             MissionStatus.DOWNTIME.value,
             MissionStatus.SAA.value,
             MissionStatus.POLAR.value
         ]
+        if self.day_side_observation:
+            valid_pointing_statuses.append(MissionStatus.CHARGING.value)
 
         # Try consecutive chunks of the required size
         current_chunk_start = 0
@@ -2643,7 +2567,8 @@ class CubeSatMission:
         
         # Create primary axis for data storage
         ax = plt.gca()
-        
+        ax.set_ylabel('Data Size [MB]', fontsize=15, labelpad=10)
+
         # Plot title with more descriptive information
         plt.title('Onboard Data Storage Utilization', fontsize=20, pad=15)
         
@@ -2677,9 +2602,11 @@ class CubeSatMission:
                 # Highlight eclipse period
                 plt.axvspan(start_time, end_time, color='lightsteelblue', alpha=0.3)
         
-        # Add reference lines for storage thresholds
-        plt.axhline(y=max_storage, color='k', linestyle='--', alpha=0.7, 
-                    label=f'Peak Storage ({max_storage:.1f} MB)')
+        # Add reference line for max capacity from the Excel config
+        # (Dangerous Data Size Stored [MB] column).
+        max_capacity = Helpers.get_data_dict(self.mission_config)['MAXIMUM_DATA_SIZE']
+        plt.axhline(y=max_capacity, color='k', linestyle='--', alpha=0.7,
+                    label=f'Max Capacity ({max_capacity:.1f} MB)')
         
         # Create a summary table at the bottom of the plot instead of figtext
         plt.subplots_adjust(bottom=0.25)  # Make room for the table
@@ -2788,7 +2715,7 @@ class CubeSatMission:
             ax[0].set_ylabel("Status", fontsize = 25)
             ax[0].tick_params(labelsize=16)
             ax[0].set_xlim(times[xlim_start], times[xlim_end])
-            ax[0].set_title('Schedule Before Pointing Allocation', fontsize = 30)
+            ax[0].set_title('Schedule Before Slewing Allocation', fontsize = 30)
             ax[0].grid(True)
 
             # Plot the operations schedule after pointing
@@ -2807,7 +2734,7 @@ class CubeSatMission:
             ax[1].set_xlabel("Time in UTC", fontsize = 25)
             ax[1].tick_params(labelsize = 16)
             ax[1].set_xlim(times[xlim_start], times[xlim_end])
-            ax[1].set_title('Schedule After Pointing Allocation', fontsize = 30)
+            ax[1].set_title('Schedule After Slewing Allocation', fontsize = 30)
             ax[1].grid(True)
             
             fig.tight_layout()

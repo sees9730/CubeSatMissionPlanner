@@ -116,7 +116,15 @@ class Satellite:
             if tle_lines:
                 self.save_tle_data(tle_lines)
                 logging.info(f"Loaded {self.satellite_name} TLE from URL.")
+            else:
+                age_days = load.days_old(self.tle_file) if load.exists(self.tle_file) else None
+                age_str = f"{age_days:.1f} days old" if age_days is not None else "unknown age"
+                print(f"WARNING: Failed to fetch new TLE for {self.satellite_name}; "
+                      f"falling back to saved TLE ({age_str}).")
         else:
+            age_days = load.days_old(self.tle_file)
+            print(f"WARNING: Using saved TLE for {self.satellite_name} ({age_days:.1f} days old) "
+                  f"instead of pulling a new one.")
             logging.info(f"Loaded existing TLE data for {self.satellite_name}.")
 
         # Load and return the TLE data as an EarthSatellite object

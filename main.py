@@ -17,8 +17,12 @@ program_options['Survey Availability Check'] = False
 program_options['Pointing Debug'] = False
 program_options['Observe Targets'] = True
 program_options['JSON Plotting Only'] = False
-program_options['Write JSON File'] = False
+program_options['Write JSON File'] = True
 program_options['JSON File Directory'] = 'JSONs/'
+# When True, targets are also considered visible on the day side as long as the
+# angle between the Sun-to-s/c and target-to-s/c lines is > 90 deg. When False,
+# visibility is restricted to eclipse (non-charging) windows as before.
+program_options['Day Side Observation'] = False
 
 # Load the Excel file
 # excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_EARLY_SCIENCE.xlsx'
