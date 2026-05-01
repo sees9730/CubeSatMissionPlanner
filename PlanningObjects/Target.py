@@ -34,10 +34,12 @@ class Target:
                  base_priority: int,
                  current_exp_time: float,
                  schedule: 'Schedule',
-                 target_altitude: list[float]):
+                 target_altitude: list[float],
+                 moon_separation: list[float] = None,
+                 max_exp_time: float = None):
         """
         Initialize a new Target object.
-        
+
         Parameters
         ----------
         name : str
@@ -61,3 +63,5 @@ class Target:
         self.current_exp_time = current_exp_time
         self.schedule = schedule
         self.target_altitude = target_altitude
+        self.moon_separation = moon_separation
+        self.max_exp_time = max_exp_time

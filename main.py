@@ -34,7 +34,7 @@ program_options['Day Side Observation'] = False
 # excel_file_path = 'Data Files/SPRITE COM/COM_SPRITE_CAL_TARGETS_1_VIS.xlsx'
 # excel_file_path = 'Data Files/Mission_Config_Example.xlsx'
 
-excel_file_path = 'Data Files/MANTIS_Mission_Config_v2.xlsx'
+excel_file_path = 'Data Files/MANTIS_Mission_Config_v3.xlsx'
 
 # Create the MissionConfig object
 cubesat_mission = CubeSatMission(excel_file_path=excel_file_path, program_options=program_options)

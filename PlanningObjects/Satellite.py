@@ -44,7 +44,8 @@ class Satellite:
                  saa_longitudes_area: list,
                  polar_constraint: int,
                  earth_constraint: int,
-                 moon_constraint: int):
+                 moon_constraint: int,
+                 sun_constraint: int):
         """
         Initialize a new Satellite object.
         
@@ -80,6 +81,7 @@ class Satellite:
         self.polar_constraint = polar_constraint
         self.earth_constraint = earth_constraint
         self.moon_constraint = moon_constraint
+        self.sun_constraint = sun_constraint
         self.moon_altitudes = []
         
         # Initialize the WGS84 coordinate system
@@ -101,65 +103,80 @@ class Satellite:
     def _create_earth_satellite(self) -> EarthSatellite:
         """
         Create an EarthSatellite object from the skyfield library using the TLE lines.
-        
+
         Returns
         -------
         EarthSatellite
             The EarthSatellite object created from the TLE data.
         """
-        max_age_days = 10  # Maximum age of the TLE file before reloading
+        ts = load.timescale()
 
-        # Check if the TLE file exists and is recent
-        if not load.exists(self.tle_file) or load.days_old(self.tle_file) >= max_age_days:
-            # Fetch and save new TLE data if the file is outdated or missing
-            tle_lines = self.fetch_tle_data()
-            if tle_lines:
-                self.save_tle_data(tle_lines)
-                logging.info(f"Loaded {self.satellite_name} TLE from URL.")
-            else:
-                age_days = load.days_old(self.tle_file) if load.exists(self.tle_file) else None
-                age_str = f"{age_days:.1f} days old" if age_days is not None else "unknown age"
-                print(f"WARNING: Failed to fetch new TLE for {self.satellite_name}; "
-                      f"falling back to saved TLE ({age_str}).")
+        # Load whatever is on disk (if anything), to check its epoch age
+        if load.exists(self.tle_file):
+            satellite = load.tle_file(self.tle_file)[0]
+            epoch_age_days = ts.now() - satellite.epoch
         else:
-            age_days = load.days_old(self.tle_file)
-            print(f"WARNING: Using saved TLE for {self.satellite_name} ({age_days:.1f} days old) "
-                  f"instead of pulling a new one.")
-            logging.info(f"Loaded existing TLE data for {self.satellite_name}.")
+            satellite = None
+            epoch_age_days = float('inf')
 
-        # Load and return the TLE data as an EarthSatellite object
-        return load.tle_file(self.tle_file)[0]
+        if epoch_age_days <= 5:
+            # Epoch is fresh — use as-is
+            logging.info(f"Using existing TLE for {self.satellite_name} "
+                         f"(epoch {epoch_age_days:.1f} days old).")
+            return satellite
+
+        # Epoch is stale (> 5 days) — try to pull a fresh one
+        print(f"TLE epoch for {self.satellite_name} is {epoch_age_days:.1f} days old. Fetching new TLE...")
+        tle_lines = self.fetch_tle_data()
+        if tle_lines:
+            self.save_tle_data(tle_lines)
+            satellite = load.tle_file(self.tle_file)[0]
+            logging.info(f"Updated TLE for {self.satellite_name} from URL.")
+            return satellite
+
+        # Fetch failed — ask the user whether to continue with the stale epoch
+        if satellite is not None:
+            epoch_utc = satellite.epoch.utc_strftime('%Y-%m-%d %H:%M UTC')
+            print(f"WARNING: Could not fetch a new TLE for {self.satellite_name}.")
+            answer = input(f"Continue with stale TLE (epoch: {epoch_utc}, "
+                           f"{epoch_age_days:.1f} days old)? [Y/N]: ").strip().upper()
+            if answer == 'Y':
+                return satellite
+
+        print("Exiting: no valid TLE available.")
+        raise SystemExit(1)
 
     def fetch_tle_data(self) -> list:
         """
         Fetch and extract TLE data for the satellite from the specified URL.
-        
+
         Returns
         -------
         list of str
             A list of TLE lines if found; otherwise, an empty list.
         """
         try:
-            # Fetch TLE data from the specified URL
             response = requests.get(self.tle_url, timeout=10)
-            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            response.raise_for_status()
 
-            # Extract the TLE lines for the satellite
             tle_data = response.text.splitlines()
-            tle_lines = [tle_data[i:i+3] for i in range(0, len(tle_data), 3) 
+            tle_lines = [tle_data[i:i+3] for i in range(0, len(tle_data), 3)
                          if tle_data[i].strip() == self.satellite_name]
 
             if not tle_lines:
                 raise ValueError(f"TLE data for {self.satellite_name} not found in the provided data.")
 
-            return tle_lines[0]  # Return the first match of TLE lines
+            return tle_lines[0]
 
+        except requests.exceptions.Timeout:
+            logging.error(f"Timeout fetching TLE for {self.satellite_name}.")
+            print(f"WARNING: TLE fetch timed out for {self.satellite_name}.")
         except requests.exceptions.RequestException as e:
             logging.error(f"Error fetching TLE data: {e}")
         except ValueError as e:
             logging.error(e)
 
-        return []  # Return an empty list if fetching fails or TLE is not found
+        return []
 
     def save_tle_data(self, tle_lines: list) -> None:
         """

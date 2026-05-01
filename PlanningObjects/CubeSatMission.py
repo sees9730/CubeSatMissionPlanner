@@ -163,7 +163,8 @@ class CubeSatMission:
                          self.mission_config.saa_info['Longitude'].values,
                          self.mission_config.constraints_info['Polar Constraint'].values[0],
                          self.mission_config.constraints_info['Earth Angle Constraint'].values[0],
-                         self.mission_config.constraints_info['Moon Angle Constraint'].values[0])
+                         self.mission_config.constraints_info['Moon Angle Constraint'].values[0],
+                         self.mission_config.constraints_info['Sun Angle Constraint'].values[0])
 
         return
 
@@ -297,19 +298,24 @@ class CubeSatMission:
         targets_data = zip(targets_info['Target'].values, targets_info['Pointing'], targets_info['HH'].values, targets_info['MM'].values,
                            targets_info['SS'].values, targets_info['dd'].values, targets_info['mm'].values,
                            targets_info['ss'].values, targets_info['Rotation Angle'].values, targets_info['Base Priority'].values,
-                           targets_info['Survey'].values)
+                           targets_info['Survey'].values, targets_info['Max Exp. Time [sec]'].values)
 
         # Sort targets_data based on Base Priority
         sorted_targets_data = sorted(targets_data, key=lambda x: x[9])  # x[9] is the Base Priority
         master_targets_list = []
         survey_names = [survey.name for survey in surveys]
 
-        # Calculate the times at which the moon is invisible
+        # Precompute moon position and altitude once for all targets
         observer = self.satellite.earth_ephemeris + self.satellite.wgs84.latlon(self.satellite.latitudes, self.satellite.longitudes, self.satellite.altitudes)
-        moon_apparent = observer.at(self.satellite.times).observe(self.satellite.moon_ephemeris)
-        alt_moon, _, _ = moon_apparent.apparent().altaz()
-        moon_invisible = alt_moon.degrees < self.satellite.moon_constraint
+        moon_astrometric = observer.at(self.satellite.times).observe(self.satellite.moon_ephemeris)
+        moon_apparent_topo = moon_astrometric.apparent()
+        alt_moon, _, _ = moon_apparent_topo.altaz()
         self.satellite.moon_altitudes = alt_moon.degrees
+
+        # Boolean mask of timesteps where moon is above the horizon (only these
+        # can possibly violate the separation constraint).
+        moon_above_horizon = alt_moon.degrees >= 0.0
+        moon_check_needed = self.satellite.moon_constraint > 0 and np.any(moon_above_horizon)
 
         # Precompute the Sun's apparent position once for the Sun-angle check used
         # when day-side observation is enabled.
@@ -317,7 +323,7 @@ class CubeSatMission:
             sun_apparent = observer.at(self.satellite.times).observe(self.satellite.sun_ephemeris).apparent()
         
         for target_data in sorted_targets_data:
-            target_name, ptng, ra_hr, ra_min, ra_sec, dec_deg, dec_min, dec_sec, rotation_angle, priority, target_survey = target_data
+            target_name, ptng, ra_hr, ra_min, ra_sec, dec_deg, dec_min, dec_sec, rotation_angle, priority, target_survey, max_exp_time = target_data
 
             # Create the skyfield target object
             target_skyfield_object = Star(ra_hours=(ra_hr, ra_min, ra_sec), dec_degrees=(dec_deg, dec_min, dec_sec))
@@ -339,18 +345,30 @@ class CubeSatMission:
             # (as seen from the s/c) is > 90 deg.
             if self.day_side_observation:
                 sun_target_angle = apparent_topo.separation_from(sun_apparent).degrees
-                sun_ok = sun_target_angle > 90.0
+                sun_ok = sun_target_angle > self.satellite.sun_constraint
                 charging_ok = ~charging_schedule | sun_ok
             else:
                 charging_ok = ~charging_schedule
-            target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & charging_ok & moon_invisible
+            # Moon separation check: only compute separation at timesteps where
+            # the moon is above the horizon — below the horizon it can't be within
+            # the constraint angle (which is always < 90°).
+            # Compute full moon-target separation (used for constraint gating and stored for plots)
+            moon_sep_degrees = apparent_topo.separation_from(moon_apparent_topo).degrees
+            if moon_check_needed:
+                moon_ok = np.ones(len(self.satellite.times), dtype=bool)
+                moon_ok[moon_above_horizon] = (
+                    moon_sep_degrees[moon_above_horizon] > self.satellite.moon_constraint
+                )
+            else:
+                moon_ok = True
+            target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & charging_ok & moon_ok
             # target_schedule = visible_times & ~saa_keepout_schedule & ~polar_keepout_schedule & sun_invisible & moon_invisible
             target_schedule_object = Schedule(str(target_name) + '_' + str(ptng), self.satellite.start_time, self.satellite.end_time,
                                             self.satellite.time_step_sec, self.satellite.times, target_schedule,
                                             {True: "Visible", False: "Not Visible"})
-            
+
             # Create the target object and store it in the survey
-            target_object = Target(str(target_name) + '_' + str(ptng), target_skyfield_object, rotation_angle, priority, 0, target_schedule_object, alt.degrees)
+            target_object = Target(str(target_name) + '_' + str(ptng), target_skyfield_object, rotation_angle, priority, 0, target_schedule_object, alt.degrees, moon_sep_degrees, max_exp_time)
             master_targets_list.append(target_object)
             target_survey_index = survey_names.index(target_survey)
             survey = surveys[target_survey_index]
@@ -526,6 +544,9 @@ class CubeSatMission:
 
             # Handle edge cases for downtime
             self._handle_edge_cases_for_downtime(operations_schedule)
+
+            # Remove slews inside eclipses that don't lead to a target observation
+            self._remove_orphan_slews(operations_schedule)
 
             # Update the eclipses with the final operations schedule
             self._update_eclipses(operations_schedule)
@@ -1050,7 +1071,7 @@ class CubeSatMission:
                 print(f'ISSUE: Eclipse {eclipse_num} has no targets available')
                 if np.any(eclipse_schedule == MissionStatus.DOWNLINK.value):
                     print('REASON: Downlinking during eclipse')
-                elif np.any(self.satellite.moon_altitudes[eclipse_start: eclipse_end + 1] > self.satellite.moon_altitudes[eclipse_start: eclipse_end + 1]):
+                elif np.any(self.satellite.moon_altitudes[eclipse_start: eclipse_end + 1] > self.satellite.moon_constraint):
                     print('REASON: Moon is visible during eclipse')
                 elif len(eclipse_schedule) * self.satellite.time_step_sec / 60 < 20:
                     print('REASON: Eclipse is too short')
@@ -1082,19 +1103,21 @@ class CubeSatMission:
         # Check for exact time requirement
         exact_time_only = False
         survey = self.science_mission.get_survey_of_target(target_name)
+        target = self.science_mission.get_target_by_name(target_name)
+        remaining_exp_time = target.max_exp_time - target.current_exp_time
         if survey.target_exp_time == survey.target_min_exp_time:
             exact_time_only = True
-            original_target_length = survey.target_min_exp_time / self.satellite.time_step_sec
+            original_target_length = min(survey.target_min_exp_time, remaining_exp_time) / self.satellite.time_step_sec
         else:
-            original_target_length = np.sum(target_schedule)
-            
+            original_target_length = min(np.sum(target_schedule), remaining_exp_time / self.satellite.time_step_sec)
+
         # Calculate minimum length required
         min_target_length = min_exp_time / self.satellite.time_step_sec
-        
+
         # Initialize target sequence length
         target_sequence_length = original_target_length
         length = len(eclipse_schedule)
-        
+
         if pointing_debug:
             print(f"Pointing length: {pointing_sequence_length}")
             print(f"Target sequence length: {target_sequence_length}")
@@ -1448,15 +1471,17 @@ class CubeSatMission:
         # Check for exact time requirement
         exact_time_only = False
         survey = self.science_mission.get_survey_of_target(target_name)
+        target = self.science_mission.get_target_by_name(target_name)
+        remaining_exp_time = target.max_exp_time - target.current_exp_time
         if survey.target_exp_time == survey.target_min_exp_time:
             exact_time_only = True
-            original_target_length = survey.target_min_exp_time / self.satellite.time_step_sec
+            original_target_length = min(survey.target_min_exp_time, remaining_exp_time) / self.satellite.time_step_sec
         else:
-            original_target_length = np.sum(target_schedule)
-        
+            original_target_length = min(np.sum(target_schedule), remaining_exp_time / self.satellite.time_step_sec)
+
         target_sequence_length = original_target_length
         length = len(eclipse_schedule)
-        
+
         if pointing_debug:
             print(f"Pointing length: {pointing_sequence_length}")
             print(f"Initial target sequence length: {target_sequence_length}")
@@ -1658,6 +1683,47 @@ class CubeSatMission:
             print(f"Allocated pointing for {target_name}")
             self.plot_eclipse_summary(eclipse.eclipse_number, operations_schedule=operations_schedule)
 
+    def _remove_orphan_slews(self, operations_schedule):
+        """Convert SLEWING runs inside eclipses that are not followed by a target
+        observation (TARGET1 or TARGET2) within the same eclipse to DOWNTIME.
+        Slews that lead into CHARGING are left untouched.
+        """
+        target_values = {MissionStatus.TARGET1.value, MissionStatus.TARGET2.value}
+        for eclipse in self.science_mission.eclipses:
+            start, end = eclipse.schedule_indices
+            eclipse_schedule = operations_schedule[start:end + 1]
+            n = len(eclipse_schedule)
+            i = 0
+            while i < n:
+                if eclipse_schedule[i] == MissionStatus.SLEWING.value:
+                    slew_start = i
+                    # Advance through the contiguous SLEWING block
+                    while i < n and eclipse_schedule[i] == MissionStatus.SLEWING.value:
+                        i += 1
+                    slew_end = i  # exclusive
+
+                    # Check what follows the slew within this eclipse
+                    if slew_end >= n:
+                        follows_target = False
+                        follows_charging = False
+                        follows_downlink = False
+                    else:
+                        # Skip past any SAA/POLAR blocks to find what truly follows
+                        passthrough = {MissionStatus.SAA.value, MissionStatus.POLAR.value}
+                        lookahead = slew_end
+                        while lookahead < n and eclipse_schedule[lookahead] in passthrough:
+                            lookahead += 1
+                        next_status = eclipse_schedule[lookahead] if lookahead < n else None
+                        follows_target = next_status in target_values
+                        follows_charging = next_status == MissionStatus.CHARGING.value
+                        follows_downlink = next_status == MissionStatus.DOWNLINK.value
+
+                    if not follows_target and not follows_charging and not follows_downlink:
+                        eclipse_schedule[slew_start:slew_end] = MissionStatus.DOWNTIME.value
+                else:
+                    i += 1
+            operations_schedule[start:end + 1] = eclipse_schedule
+
     # TODO: Description
     def _allocate_pointing_windows_for_charging(self, operations_schedule):
         """_summary_
@@ -1843,7 +1909,7 @@ class CubeSatMission:
             for target_name, target_schedule in eclipse.targets_available.items():
                 target_survey = self.science_mission.get_survey_of_target(target_name)
                 target = self.science_mission.get_target_by_name(target_name)
-                if target.current_exp_time < target_survey.total_exp_time:
+                if target.max_exp_time - target.current_exp_time >= self.satellite.time_step_sec:
                     if target.base_priority < 0:
                         # Negative base priority: use as fixed rank (lower = higher priority)
                         target.eclipse_priority = target.base_priority
@@ -2115,29 +2181,17 @@ class CubeSatMission:
         
         # Get target requirements/goals from the mission configuration
         target_goals = {}
+        targets_info_df = self.mission_config.targets_info
         for target in unique_targets:
-            try:
-                # Get the target's survey
-                target_survey = self.science_mission.get_survey_of_target(target)
-
-                # Get the index of the survey in the mission configuration
-                survey_index = self.mission_config.survey_info["Survey"].to_list().index(target_survey.name)
-
-                # Get the exposure time per pointing for the target
-                exp_time_per_pointing = self.mission_config.survey_info["ExpTime Per Pointing [s]"][survey_index]
-
-                # Add the target's goal to the dictionary
-                target_goals[target] = exp_time_per_pointing
-            except (AttributeError, KeyError, ValueError, IndexError) as e:
-                # If there's an error getting the goal, output info for debugging
-                print(f"Could not get goal for target {target}: {e}")
-                # Set a default goal based on achieved value if available
-                if cumulative_times_by_target[target] and len(cumulative_times_by_target[target]) > 0:
-                    # Fall back to using the achieved value as the goal
+            target_obj = self.science_mission.get_target_by_name(target)
+            if target_obj is not None and target_obj.max_exp_time is not None:
+                target_goals[target] = target_obj.max_exp_time
+            else:
+                # Fall back to achieved value so percentage shows 100%
+                if cumulative_times_by_target[target]:
                     target_goals[target] = cumulative_times_by_target[target][-1][1]
                 else:
-                    # Default to a reasonable value if no achievement data
-                    target_goals[target] = 600  # 10 minutes in seconds
+                    target_goals[target] = 600
         
         # Calculate completion percentages
         target_completion_percentages = {}
@@ -2340,9 +2394,6 @@ class CubeSatMission:
             cell.set_facecolor('lightgray')
             cell.set_text_props(weight='bold')
         
-        # Set up the layout with precise control over spacing
-        plt.tight_layout()
-        
         # Apply specific adjustments to ensure all elements are visible
         plt.subplots_adjust(
             top=0.82,      # Space for title and percentage bars at top
@@ -2374,8 +2425,8 @@ class CubeSatMission:
         # Extract subcategories and process mission schedule data
         schedule_counter = Counter(mission_schedule)
         time_conversion = self.satellite.time_step_sec / 60
-        subcategories = [status.name for status in MissionStatus if status.name != "TARGET1"]
-        data = np.array([[schedule_counter.get(status.value, 0) * time_conversion for status in MissionStatus if status.name != "TARGET1"]], dtype=int)
+        subcategories = [status.name for status in MissionStatus if status.name not in ("TARGET1", "TARGET2")]
+        data = np.array([[schedule_counter.get(status.value, 0) * time_conversion for status in MissionStatus if status.name not in ("TARGET1", "TARGET2")]], dtype=int)
 
         # Include target completion data with fixed handling for the new data structure
         for target_name, observation_data in self.target_completion.items():
@@ -2410,6 +2461,7 @@ class CubeSatMission:
         bars = ax.bar(subcategories, data[0], color=bar_colors)
         ax.set_ylabel('Time in minutes', fontsize=12)
         ax.set_title('Mission Schedule Overview', fontsize=16)
+        ax.set_xticks(range(len(subcategories)))
         ax.set_xticklabels(subcategories, rotation=30, ha='right')
         ax.set_ylim(0, max(data[0]) + 100)
         plt.grid(alpha=0.2)
@@ -2675,8 +2727,6 @@ class CubeSatMission:
         # Add legend with custom positioning
         plt.legend(loc='upper left', fontsize=9)
         
-        # Plot margins and layout
-        plt.tight_layout()
         plt.subplots_adjust(bottom=0.25)  # Ensure there's room for the table
         
         # Show the plot
@@ -2779,20 +2829,28 @@ class CubeSatMission:
 
         # Plot the target(s)'s altitudes
         colors = ['lightcoral', 'gold']
+        moon_sep_colors = ['mediumorchid', 'steelblue']
         target_names = []
         i = 0
         for i, target_name in enumerate(eclipse.targets_names):
             target = self.science_mission.get_target_by_name(target_name)
             target_altitude = Helpers.inclusive_slice(target.target_altitude, eclipse_start, eclipse_end)
             target_names.append(target_name)
-
             ax_target.plot(times, target_altitude, '--', color=colors[i], label=f'Target: {target.name}')
-        
+
+        # Earth constraint threshold: alt must exceed limb_alt_deg + earth_constraint.
+        # limb_alt_deg = -(90 - arcsin(R/(R+h))). Use mean over eclipse for the horizontal line.
+        R_earth_km = 6378.137
+        sat_alt_eclipse = Helpers.inclusive_slice(self.satellite.altitudes, eclipse_start, eclipse_end) / 1000.0
+        rho_deg = np.degrees(np.arcsin(R_earth_km / (R_earth_km + sat_alt_eclipse)))
+        limb_alt_deg_eclipse = -(90 - rho_deg)
+        earth_threshold = np.mean(limb_alt_deg_eclipse) + self.satellite.earth_constraint
+
         if i == 0:
             ax_target.set_title(f'Target Altitude Throughout Eclipse {eclipse_num}')
         else:
             ax_target.set_title(f"Targets' Altitude Throughout Eclipse {eclipse_num}")
-        ax_target.axhline(y=90 - self.satellite.earth_constraint, color='firebrick', label=f'Earth Angle Constraint: {self.satellite.earth_constraint:.2f}°')
+        ax_target.axhline(y=earth_threshold, color='firebrick', label=f'Earth Angle Constraint: {self.satellite.earth_constraint:.2f}° (≈{earth_threshold:.1f}° alt)')
         ax_target.legend(loc='best')
         ax_target.set_xlabel('Time in UTC')
         ax_target.set_ylabel('Target Altitude in Degrees')
@@ -2800,14 +2858,18 @@ class CubeSatMission:
         ax_target.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d, %H:%M'))
         ax_target.grid(alpha=0.3)
 
-        # Plot the moon's altitudes
-        moon_altitude = Helpers.inclusive_slice(self.satellite.moon_altitudes, eclipse_start, eclipse_end)
-        ax_moon.plot(times, moon_altitude, '--', color='yellowgreen')
-        ax_moon.axhline(y=self.satellite.moon_constraint, color='olivedrab', label=f'Altitude (Moon) Constraint: {self.satellite.moon_constraint:.2f}')
-        ax_moon.set_title(f'Moon Altitude Throughout Eclipse {eclipse_num}')
+        # Plot moon-target separation for each target (correct quantity for the constraint)
+        for i, target_name in enumerate(eclipse.targets_names):
+            target = self.science_mission.get_target_by_name(target_name)
+            if target.moon_separation is not None:
+                sep = Helpers.inclusive_slice(target.moon_separation, eclipse_start, eclipse_end)
+                ax_moon.plot(times, sep, '--', color=moon_sep_colors[i], label=f'Moon Sep: {target.name}')
+        ax_moon.axhline(y=self.satellite.moon_constraint, color='olivedrab', linestyle='-',
+                        label=f'Moon Angle Constraint: {self.satellite.moon_constraint:.2f}°')
+        ax_moon.set_title(f'Moon-Target Separation Throughout Eclipse {eclipse_num}')
         ax_moon.legend(loc='best')
         ax_moon.set_xlabel('Time in UTC')
-        ax_moon.set_ylabel('Moon Altitude in Degrees')
+        ax_moon.set_ylabel('Moon-Target Separation (degrees)')
         ax_moon.grid(alpha=0.3)
         ax_moon.tick_params(axis='x', rotation=25)
         ax_moon.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d, %H:%M'))
